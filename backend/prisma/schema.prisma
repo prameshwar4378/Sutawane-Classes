@@ -1,0 +1,276 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model SystemSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model HealthLog {
+  id        String   @id @default(uuid())
+  status    String
+  details   String?
+  createdAt DateTime @default(now())
+}
+
+// -------------------------------------------------------------
+// Core Organizational Entities: Branches & Academic Sessions
+// -------------------------------------------------------------
+
+model Branch {
+  id            String   @id @default(uuid())
+  name          String   @unique // e.g. "Nagpur Main Branch"
+  code          String   @unique // e.g. "NGP"
+  address       String?
+  phone         String?
+  contactPerson String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  admissions      StudentAdmission[]
+  payments        Payment[]
+  expenses        Expense[]
+  receiptCounters ReceiptCounter[]
+}
+
+model AcademicSession {
+  id          String   @id @default(uuid())
+  name        String   @unique // e.g. "2026-27"
+  displayName String   // e.g. "Academic Year 2026–27"
+  startDate   DateTime
+  endDate     DateTime
+  isCurrent   Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  admissions          StudentAdmission[]
+  feePlans            FeePlan[]
+  originalDues        PreviousSessionDue[] @relation("OriginalSession")
+  currentDues         PreviousSessionDue[] @relation("CurrentSession")
+  receiptCounters     ReceiptCounter[]
+}
+
+// -------------------------------------------------------------
+// Student Profiles & Session-Scoped Admissions
+// -------------------------------------------------------------
+
+model Student {
+  id          String    @id @default(uuid())
+  studentCode String    @unique // Auto-generated: SC-2026-0001
+  fullName    String
+  parentPhone String
+  studentPhone String?
+  address     String?
+  photoUrl    String?
+  dateOfBirth DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  admissions         StudentAdmission[]
+  payments           Payment[]
+  previousSessionDues PreviousSessionDue[]
+
+  @@index([fullName])
+  @@index([parentPhone])
+}
+
+model StudentAdmission {
+  id            String   @id @default(uuid())
+  studentId     String
+  branchId      String
+  sessionId     String
+  rollNumber    String   // unique within branch + session
+  standard      String   // e.g. "Class 10", "Class 12 Science"
+  admissionDate DateTime @default(now())
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  student Student         @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  branch  Branch          @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  session AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  feePlan FeePlan?
+
+  @@unique([studentId, sessionId])
+  @@unique([branchId, sessionId, rollNumber])
+  @@index([branchId])
+  @@index([sessionId])
+  @@index([standard])
+}
+
+// -------------------------------------------------------------
+// Installment Fee Architecture & Payment Accounting
+// -------------------------------------------------------------
+
+model FeePlan {
+  id            String   @id @default(uuid())
+  admissionId   String   @unique
+  sessionId     String
+  totalFees     Float    @default(0.0) // Gross agreed fees
+  totalDiscount Float    @default(0.0) // Sum of approved fee discounts
+  netPayable    Float    @default(0.0) // totalFees - totalDiscount
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  admission    StudentAdmission @relation(fields: [admissionId], references: [id], onDelete: Cascade)
+  session      AcademicSession  @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  installments Installment[]
+  discounts    FeeDiscount[]
+
+  @@index([sessionId])
+}
+
+model FeeDiscount {
+  id           String   @id @default(uuid())
+  feePlanId    String
+  reason       String   // e.g. "Sibling concession", "Merit discount"
+  amount       Float
+  approvedDate DateTime @default(now())
+  notes        String?
+  createdAt    DateTime @default(now())
+
+  feePlan FeePlan @relation(fields: [feePlanId], references: [id], onDelete: Cascade)
+}
+
+model Installment {
+  id            String   @id @default(uuid())
+  feePlanId     String
+  installmentNo Int
+  label         String   // e.g. "Installment 1"
+  dueDate       DateTime
+  amountDue     Float
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  feePlan     FeePlan             @relation(fields: [feePlanId], references: [id], onDelete: Cascade)
+  allocations PaymentAllocation[]
+
+  @@index([dueDate])
+}
+
+model Payment {
+  id              String    @id @default(uuid())
+  studentId       String
+  branchId        String
+  receiptNumber   String    @unique // e.g. "SC/2026-27/NGP/REC-00001"
+  totalAmount     Float
+  paymentDate     DateTime  @default(now())
+  paymentMode     String    // "CASH", "UPI", "BANK_TRANSFER", "CHEQUE", "OTHER"
+  referenceNumber String?   // Transaction ID / UTR / Cheque No
+  notes           String?
+  isReversed      Boolean   @default(false)
+  reversalReason  String?
+  reversedAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  student     Student             @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  branch      Branch              @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  allocations PaymentAllocation[]
+
+  @@index([studentId])
+  @@index([branchId])
+  @@index([paymentDate])
+}
+
+model PaymentAllocation {
+  id              String   @id @default(uuid())
+  paymentId       String
+  installmentId   String
+  allocatedAmount Float
+  createdAt       DateTime @default(now())
+
+  payment     Payment     @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  installment Installment @relation(fields: [installmentId], references: [id], onDelete: Restrict)
+
+  @@index([paymentId])
+  @@index([installmentId])
+}
+
+model PreviousSessionDue {
+  id                String   @id @default(uuid())
+  studentId         String
+  originalSessionId String
+  currentSessionId  String
+  outstandingAmount Float
+  collectedAmount   Float    @default(0.0)
+  description       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  student         Student         @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  originalSession AcademicSession @relation("OriginalSession", fields: [originalSessionId], references: [id], onDelete: Restrict)
+  currentSession  AcademicSession @relation("CurrentSession", fields: [currentSessionId], references: [id], onDelete: Restrict)
+
+  @@index([studentId])
+}
+
+model ReceiptCounter {
+  id         String   @id @default(uuid())
+  branchId   String
+  sessionId  String
+  prefix     String   // e.g. "SC/2026-27/NGP/REC-"
+  lastNumber Int      @default(0)
+  updatedAt  DateTime @updatedAt
+
+  branch  Branch          @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  session AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([branchId, sessionId])
+}
+
+// -------------------------------------------------------------
+// Expense Architecture & Category Taxonomy
+// -------------------------------------------------------------
+
+model ExpenseCategory {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
+
+  expenses Expense[]
+}
+
+model Expense {
+  id              String   @id @default(uuid())
+  branchId        String
+  categoryId      String
+  amount          Float
+  expenseDate     DateTime @default(now())
+  description     String
+  paymentMode     String   // "CASH", "UPI", "BANK_TRANSFER", "CHEQUE", "OTHER"
+  vendor          String?
+  referenceNumber String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  branch      Branch              @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  category    ExpenseCategory     @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  attachments ExpenseAttachment[]
+
+  @@index([branchId])
+  @@index([categoryId])
+  @@index([expenseDate])
+}
+
+model ExpenseAttachment {
+  id        String   @id @default(uuid())
+  expenseId String
+  fileName  String
+  filePath  String
+  fileSize  Int
+  mimeType  String
+  createdAt DateTime @default(now())
+
+  expense Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+}

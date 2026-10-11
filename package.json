@@ -1,0 +1,63 @@
+{
+  "name": "sutawane-classes-management-system",
+  "version": "1.0.0",
+  "description": "Comprehensive Management System for Sutawane Classes",
+  "private": true,
+  "main": "dist/electron/main.js",
+  "workspaces": [
+    "shared",
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "concurrently -n \"BACKEND,FRONTEND\" -c \"blue,green\" \"npm run dev -w backend\" \"npm run dev -w frontend\"",
+    "dev:electron": "concurrently -k -n \"BACKEND,FRONTEND,ELECTRON\" -c \"blue,green,magenta\" \"npm run dev -w backend\" \"npm run dev -w frontend\" \"wait-on tcp:5000 tcp:5173 && npm run electron:start\"",
+    "electron:build-ts": "tsc -p electron/tsconfig.json",
+    "electron:start": "npm run electron:build-ts && cross-env NODE_ENV=development electron .",
+    "build:shared": "npm run build -w shared",
+    "build:backend": "npm run build -w backend",
+    "build:frontend": "npm run build -w frontend",
+    "build": "npm run build:shared && npm run build:backend && npm run build:frontend && npm run electron:build-ts",
+    "test": "vitest run --dir backend/tests",
+    "test:db": "npm run test -w backend",
+    "test:frontend": "npm run test -w frontend",
+    "db:generate": "npm run prisma:generate -w backend",
+    "db:push": "npm run prisma:push -w backend",
+    "db:migrate": "npm run prisma:migrate -w backend",
+    "db:studio": "npm run prisma:studio -w backend",
+    "package:win": "npm run build && electron-builder --win"
+  },
+  "build": {
+    "appId": "com.sutawane.classes",
+    "productName": "Sutawane Classes Management System",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/electron/**/*",
+      "backend/dist/**/*",
+      "frontend/dist/**/*",
+      "shared/dist/**/*",
+      "backend/prisma/**/*",
+      "node_modules/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Sutawane Classes"
+    }
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "electron": "^35.0.0",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.7.3",
+    "wait-on": "^8.0.2"
+  }
+}
