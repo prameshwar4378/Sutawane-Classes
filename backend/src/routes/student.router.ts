@@ -1,20 +1,90 @@
 import { Router, Request, Response } from 'express'
+import multer from 'multer'
+import path from 'path'
+import fs from 'fs'
 import { prisma } from '../services/db'
+import { storagePaths } from '../config/index'
 
 export const studentRouter = Router()
 
-// GET all students with branch and session filters
+// Configure Multer for student photographs
+const photoStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    cb(null, storagePaths.photosDir)
+  },
+  filename: (req, file, cb) => {
+    const studentId = String(req.params.id || 'new')
+    const ext = path.extname(file.originalname) || '.jpg'
+    cb(null, `photo-${studentId}-${Date.now()}${ext}`)
+  },
+})
+
+const photoUpload = multer({
+  storage: photoStorage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB limit
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true)
+    } else {
+      cb(new Error('Only image files (JPEG, PNG, WebP) are allowed'))
+    }
+  },
+})
+
+// Helper function to compute installment status
+export function calculateInstallmentStatus(amountDue: number, amountPaid: number, dueDate: Date): string {
+  if (amountPaid >= amountDue && amountDue > 0) {
+    return 'PAID'
+  }
+  if (amountPaid > 0 && amountPaid < amountDue) {
+    return 'PARTIAL'
+  }
+
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const due = new Date(dueDate)
+  due.setHours(0, 0, 0, 0)
+
+  if (today.getTime() > due.getTime()) {
+    return 'OVERDUE'
+  }
+  if (today.getTime() === due.getTime()) {
+    return 'DUE'
+  }
+  return 'UPCOMING'
+}
+
+// GET all students with search, standard, branch and session filters
 studentRouter.get('/', async (req: Request, res: Response) => {
   try {
-    const { branchId, sessionId } = req.query
+    const { branchId, sessionId, standard, search, isActive } = req.query
 
     // Build admission filter
-    const admissionWhere: any = { isActive: true }
+    const admissionWhere: any = {}
+
+    if (isActive !== 'ALL') {
+      admissionWhere.isActive = isActive === 'false' ? false : true
+    }
+
     if (branchId && branchId !== 'ALL') {
       admissionWhere.branchId = String(branchId)
     }
     if (sessionId) {
       admissionWhere.sessionId = String(sessionId)
+    }
+    if (standard && standard !== 'ALL') {
+      admissionWhere.standard = String(standard)
+    }
+
+    // Search query on student bio or roll number
+    if (search && String(search).trim()) {
+      const q = String(search).trim()
+      admissionWhere.OR = [
+        { rollNumber: { contains: q } },
+        { student: { fullName: { contains: q } } },
+        { student: { parentPhone: { contains: q } } },
+        { student: { studentCode: { contains: q } } },
+      ]
     }
 
     const admissions = await prisma.studentAdmission.findMany({
@@ -51,15 +121,19 @@ studentRouter.get('/', async (req: Request, res: Response) => {
         admissionId: adm.id,
         studentCode: student.studentCode,
         fullName: student.fullName,
+        photoUrl: student.photoUrl,
         rollNumber: adm.rollNumber,
         standard: adm.standard,
         branchId: adm.branchId,
         branchName: adm.branch.name,
+        branchCode: adm.branch.code,
         sessionId: adm.sessionId,
         sessionName: adm.session.name,
         parentPhone: student.parentPhone,
         studentPhone: student.studentPhone,
         address: student.address,
+        isActive: adm.isActive,
+        admissionDate: adm.admissionDate.toISOString(),
         totalFees,
         paidFees,
         pendingFees,
@@ -70,6 +144,148 @@ studentRouter.get('/', async (req: Request, res: Response) => {
     res.json(summary)
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch students', details: String(error) })
+  }
+})
+
+// GET detailed student profile by ID
+studentRouter.get('/:id', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id)
+
+    const student = await prisma.student.findUnique({
+      where: { id },
+      include: {
+        admissions: {
+          include: {
+            branch: true,
+            session: true,
+            feePlan: {
+              include: {
+                discounts: true,
+                installments: {
+                  include: {
+                    allocations: {
+                      include: {
+                        payment: true,
+                      },
+                    },
+                  },
+                  orderBy: { installmentNo: 'asc' },
+                },
+              },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+        },
+        payments: {
+          include: {
+            allocations: {
+              include: {
+                installment: true,
+              },
+            },
+          },
+          orderBy: { paymentDate: 'desc' },
+        },
+      },
+    })
+
+    if (!student) {
+      return res.status(404).json({ error: 'Student not found' })
+    }
+
+    const currentAdmission = student.admissions[0] || null
+    const feePlan = currentAdmission?.feePlan || null
+
+    // Compute installments with status
+    const installmentsWithStatus = feePlan?.installments.map((inst) => {
+      // Sum non-reversed allocations
+      const paid = inst.allocations.reduce((sum, alloc) => {
+        return alloc.payment.isReversed ? sum : sum + alloc.allocatedAmount
+      }, 0)
+
+      const status = calculateInstallmentStatus(inst.amountDue, paid, inst.dueDate)
+
+      return {
+        id: inst.id,
+        installmentNo: inst.installmentNo,
+        label: inst.label,
+        dueDate: inst.dueDate.toISOString(),
+        amountDue: inst.amountDue,
+        amountPaid: paid,
+        balanceRemaining: Math.max(0, inst.amountDue - paid),
+        status,
+      }
+    }) || []
+
+    const totalFees = feePlan?.totalFees || 0
+    const totalDiscount = feePlan?.totalDiscount || 0
+    const netPayable = feePlan?.netPayable || totalFees - totalDiscount
+
+    const totalPaid = student.payments.reduce((acc, p) => {
+      return p.isReversed ? acc : acc + p.totalAmount
+    }, 0)
+
+    const totalPending = Math.max(0, netPayable - totalPaid)
+
+    res.json({
+      id: student.id,
+      studentCode: student.studentCode,
+      fullName: student.fullName,
+      photoUrl: student.photoUrl,
+      parentPhone: student.parentPhone,
+      studentPhone: student.studentPhone,
+      address: student.address,
+      dateOfBirth: student.dateOfBirth ? student.dateOfBirth.toISOString() : null,
+      createdAt: student.createdAt.toISOString(),
+      currentAdmission: currentAdmission
+        ? {
+            id: currentAdmission.id,
+            rollNumber: currentAdmission.rollNumber,
+            standard: currentAdmission.standard,
+            admissionDate: currentAdmission.admissionDate.toISOString(),
+            isActive: currentAdmission.isActive,
+            branch: currentAdmission.branch,
+            session: currentAdmission.session,
+          }
+        : null,
+      feeSummary: {
+        totalFees,
+        totalDiscount,
+        netPayable,
+        totalPaid,
+        totalPending,
+      },
+      installments: installmentsWithStatus,
+      payments: student.payments.map((p) => ({
+        id: p.id,
+        receiptNumber: p.receiptNumber,
+        totalAmount: p.totalAmount,
+        paymentDate: p.paymentDate.toISOString(),
+        paymentMode: p.paymentMode,
+        referenceNumber: p.referenceNumber,
+        notes: p.notes,
+        isReversed: p.isReversed,
+        reversalReason: p.reversalReason,
+        reversedAt: p.reversedAt ? p.reversedAt.toISOString() : null,
+        allocations: p.allocations.map((a) => ({
+          id: a.id,
+          allocatedAmount: a.allocatedAmount,
+          installmentLabel: a.installment.label,
+        })),
+      })),
+      allAdmissions: student.admissions.map((a) => ({
+        id: a.id,
+        rollNumber: a.rollNumber,
+        standard: a.standard,
+        branchName: a.branch.name,
+        sessionName: a.session.name,
+        isActive: a.isActive,
+        admissionDate: a.admissionDate.toISOString(),
+      })),
+    })
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch student profile', details: String(error) })
   }
 })
 
@@ -86,6 +302,7 @@ studentRouter.post('/', async (req: Request, res: Response) => {
       totalFees,
       branchId,
       sessionId,
+      customInstallments, // optional custom installment schedule array
     } = req.body
 
     if (!fullName || !rollNumber || !parentPhone) {
@@ -131,7 +348,7 @@ studentRouter.post('/', async (req: Request, res: Response) => {
     const feesNumber = Number(totalFees) || 0
     const studentCode = `SC-${Date.now().toString().slice(-4)}-${Math.floor(100 + Math.random() * 900)}`
 
-    // Transaction to create student, admission, fee plan, and 3 standard installments
+    // Transaction to create student, admission, fee plan, and installments
     const result = await prisma.$transaction(async (tx) => {
       const student = await tx.student.create({
         data: {
@@ -163,37 +380,51 @@ studentRouter.post('/', async (req: Request, res: Response) => {
         },
       })
 
-      // Create 3 installments: 40% due at admission, 30% after 45 days, 30% after 90 days
-      const inst1Amount = Math.round(feesNumber * 0.4)
-      const inst2Amount = Math.round(feesNumber * 0.3)
-      const inst3Amount = feesNumber - (inst1Amount + inst2Amount)
-
       const now = new Date()
-      await tx.installment.createMany({
-        data: [
-          {
+
+      // If custom installments provided, use them; otherwise auto-generate 3 installments
+      if (Array.isArray(customInstallments) && customInstallments.length > 0) {
+        await tx.installment.createMany({
+          data: customInstallments.map((inst: any, idx: number) => ({
             feePlanId: feePlan.id,
-            installmentNo: 1,
-            label: 'Installment 1 (Admission)',
-            dueDate: now,
-            amountDue: inst1Amount,
-          },
-          {
-            feePlanId: feePlan.id,
-            installmentNo: 2,
-            label: 'Installment 2',
-            dueDate: new Date(now.getTime() + 45 * 24 * 3600 * 1000),
-            amountDue: inst2Amount,
-          },
-          {
-            feePlanId: feePlan.id,
-            installmentNo: 3,
-            label: 'Installment 3 (Final)',
-            dueDate: new Date(now.getTime() + 90 * 24 * 3600 * 1000),
-            amountDue: inst3Amount,
-          },
-        ],
-      })
+            installmentNo: idx + 1,
+            label: inst.label || `Installment ${idx + 1}`,
+            dueDate: new Date(inst.dueDate || now),
+            amountDue: Number(inst.amountDue) || 0,
+          })),
+        })
+      } else {
+        // Auto-generate 3 installments: 40% admission, 30% month 2, 30% month 3
+        const inst1Amount = Math.round(feesNumber * 0.4)
+        const inst2Amount = Math.round(feesNumber * 0.3)
+        const inst3Amount = feesNumber - (inst1Amount + inst2Amount)
+
+        await tx.installment.createMany({
+          data: [
+            {
+              feePlanId: feePlan.id,
+              installmentNo: 1,
+              label: 'Installment 1 (Admission)',
+              dueDate: now,
+              amountDue: inst1Amount,
+            },
+            {
+              feePlanId: feePlan.id,
+              installmentNo: 2,
+              label: 'Installment 2',
+              dueDate: new Date(now.getTime() + 45 * 24 * 3600 * 1000),
+              amountDue: inst2Amount,
+            },
+            {
+              feePlanId: feePlan.id,
+              installmentNo: 3,
+              label: 'Installment 3 (Final)',
+              dueDate: new Date(now.getTime() + 90 * 24 * 3600 * 1000),
+              amountDue: inst3Amount,
+            },
+          ],
+        })
+      }
 
       return { student, admission, feePlan }
     })
@@ -201,6 +432,182 @@ studentRouter.post('/', async (req: Request, res: Response) => {
     res.status(201).json(result)
   } catch (error) {
     res.status(500).json({ error: 'Failed to admit student', details: String(error) })
+  }
+})
+
+// PUT update student bio and current admission details
+studentRouter.put('/:id', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id)
+    const { fullName, parentPhone, studentPhone, address, dateOfBirth, standard, rollNumber } = req.body
+
+    const student = await prisma.student.findUnique({
+      where: { id },
+      include: { admissions: { where: { isActive: true }, take: 1 } },
+    })
+
+    if (!student) {
+      return res.status(404).json({ error: 'Student not found' })
+    }
+
+    const currentAdmission = student.admissions[0]
+
+    // If rollNumber changed, check for collision in the branch/session
+    if (rollNumber && currentAdmission && rollNumber !== currentAdmission.rollNumber) {
+      const collision = await prisma.studentAdmission.findFirst({
+        where: {
+          branchId: currentAdmission.branchId,
+          sessionId: currentAdmission.sessionId,
+          rollNumber,
+          NOT: { id: currentAdmission.id },
+        },
+      })
+      if (collision) {
+        return res.status(409).json({ error: `Roll number ${rollNumber} is already taken in this branch & session` })
+      }
+    }
+
+    // Transaction to update student and admission
+    const updated = await prisma.$transaction(async (tx) => {
+      const updatedStudent = await tx.student.update({
+        where: { id },
+        data: {
+          fullName: fullName !== undefined ? fullName : undefined,
+          parentPhone: parentPhone !== undefined ? parentPhone : undefined,
+          studentPhone: studentPhone !== undefined ? studentPhone || null : undefined,
+          address: address !== undefined ? address || null : undefined,
+          dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
+        },
+      })
+
+      if (currentAdmission && (standard || rollNumber)) {
+        await tx.studentAdmission.update({
+          where: { id: currentAdmission.id },
+          data: {
+            standard: standard || undefined,
+            rollNumber: rollNumber || undefined,
+          },
+        })
+      }
+
+      return updatedStudent
+    })
+
+    res.json(updated)
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to update student profile', details: String(error) })
+  }
+})
+
+// PATCH toggle student active / archived status
+studentRouter.patch('/:id/status', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id)
+    const { isActive } = req.body
+
+    const student = await prisma.student.findUnique({
+      where: { id },
+      include: { admissions: true },
+    })
+
+    if (!student) {
+      return res.status(404).json({ error: 'Student not found' })
+    }
+
+    // Toggle active flag on admissions without deleting financial records
+    await prisma.studentAdmission.updateMany({
+      where: { studentId: id },
+      data: { isActive: Boolean(isActive) },
+    })
+
+    res.json({ success: true, studentId: id, isActive: Boolean(isActive) })
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to toggle student archive status', details: String(error) })
+  }
+})
+
+// POST upload student photograph
+studentRouter.post('/:id/photo', photoUpload.single('photo'), async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id)
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No photograph file was provided' })
+    }
+
+    const student = await prisma.student.findUnique({
+      where: { id },
+    })
+
+    if (!student) {
+      // Remove uploaded file if student does not exist
+      fs.unlinkSync(req.file.path)
+      return res.status(404).json({ error: 'Student not found' })
+    }
+
+    // Delete old photo if exists
+    if (student.photoUrl) {
+      const oldFileName = path.basename(student.photoUrl)
+      const oldFilePath = path.join(storagePaths.photosDir, oldFileName)
+      if (fs.existsSync(oldFilePath)) {
+        try {
+          fs.unlinkSync(oldFilePath)
+        } catch {
+          // ignore unlink error
+        }
+      }
+    }
+
+    const photoUrl = `/api/uploads/photos/${req.file.filename}`
+
+    const updated = await prisma.student.update({
+      where: { id },
+      data: { photoUrl },
+    })
+
+    res.json({
+      success: true,
+      studentId: id,
+      photoUrl: updated.photoUrl,
+    })
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to upload student photograph', details: String(error) })
+  }
+})
+
+// DELETE remove student photo
+studentRouter.delete('/:id/photo', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id)
+
+    const student = await prisma.student.findUnique({
+      where: { id },
+    })
+
+    if (!student) {
+      return res.status(404).json({ error: 'Student not found' })
+    }
+
+    if (student.photoUrl) {
+      const oldFileName = path.basename(student.photoUrl)
+      const oldFilePath = path.join(storagePaths.photosDir, oldFileName)
+      if (fs.existsSync(oldFilePath)) {
+        try {
+          fs.unlinkSync(oldFilePath)
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    const updated = await prisma.student.update({
+      where: { id },
+      data: { photoUrl: null },
+    })
+
+    res.json({ success: true, studentId: id, photoUrl: updated.photoUrl })
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete student photo', details: String(error) })
   }
 })
 
@@ -223,7 +630,11 @@ studentRouter.post('/payments', async (req: Request, res: Response) => {
             feePlan: {
               include: {
                 installments: {
-                  include: { allocations: true },
+                  include: {
+                    allocations: {
+                      include: { payment: true },
+                    },
+                  },
                   orderBy: { installmentNo: 'asc' },
                 },
               },
@@ -272,7 +683,11 @@ studentRouter.post('/payments', async (req: Request, res: Response) => {
         for (const inst of feePlan.installments) {
           if (remainingToAllocate <= 0) break
 
-          const alreadyPaid = inst.allocations.reduce((sum, a) => sum + a.allocatedAmount, 0)
+          // Filter out reversed payments
+          const alreadyPaid = inst.allocations.reduce((sum, a) => {
+            return a.payment.isReversed ? sum : sum + a.allocatedAmount
+          }, 0)
+
           const needed = Math.max(0, inst.amountDue - alreadyPaid)
 
           if (needed > 0) {

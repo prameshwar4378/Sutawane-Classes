@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { StudentsPage } from '@/pages/StudentsPage'
+import { StudentDetailPage } from '@/pages/StudentDetailPage'
 import { CollectFeesPage } from '@/pages/CollectFeesPage'
 import { DuesPage } from '@/pages/DuesPage'
 import { ExpensesPage } from '@/pages/ExpensesPage'
@@ -20,6 +21,7 @@ export const App: React.FC = () => {
         <Route path="/" element={<AppLayout />}>
           <Route index element={<DashboardPage />} />
           <Route path="students" element={<StudentsPage />} />
+          <Route path="students/:id" element={<StudentDetailPage />} />
           <Route path="fees/collect" element={<CollectFeesPage />} />
           <Route path="fees/dues" element={<DuesPage />} />
           <Route path="expenses" element={<ExpensesPage />} />

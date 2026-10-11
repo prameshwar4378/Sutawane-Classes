@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { useApp } from '@/context/AppContext'
@@ -21,16 +22,42 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { Users, UserPlus, Search, Phone, IndianRupee } from 'lucide-react'
-import { formatCurrency, formatDate } from '@/lib/utils'
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+  AlertDialogAction,
+} from '@/components/ui/alert-dialog'
+import {
+  Users,
+  UserPlus,
+  Search,
+  CreditCard,
+  Eye,
+  Archive,
+  User,
+  Filter,
+  CheckCircle2,
+} from 'lucide-react'
+import { formatCurrency } from '@/lib/utils'
 
 export const StudentsPage: React.FC = () => {
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { selectedBranchId, branches } = useApp()
-  const [isDialogOpen, setIsDialogOpen] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
 
-  // Form states
+  const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [archiveTarget, setArchiveTarget] = useState<any>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [standardFilter, setStandardFilter] = useState('ALL')
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'true' | 'false'>('true')
+  const [toastMsg, setToastMsg] = useState('')
+
+  // Form states for new admission
   const [fullName, setFullName] = useState('')
   const [rollNumber, setRollNumber] = useState('')
   const [standard, setStandard] = useState('Class 10')
@@ -41,25 +68,52 @@ export const StudentsPage: React.FC = () => {
   const [totalFees, setTotalFees] = useState('25000')
   const [formError, setFormError] = useState('')
 
+  // Query students
   const { data: students = [], isLoading } = useQuery({
-    queryKey: ['students', selectedBranchId],
+    queryKey: ['students', selectedBranchId, standardFilter, statusFilter, searchQuery],
     queryFn: () =>
       api.get('/students', {
         branchId: selectedBranchId !== 'ALL' ? selectedBranchId : undefined,
+        standard: standardFilter !== 'ALL' ? standardFilter : undefined,
+        isActive: statusFilter,
+        search: searchQuery || undefined,
       }),
   })
 
+  // Create admission mutation
   const createMutation = useMutation({
     mutationFn: (data: any) => api.post('/students', data),
-    onSuccess: () => {
+    onSuccess: (res: any) => {
       queryClient.invalidateQueries({ queryKey: ['students'] })
       queryClient.invalidateQueries({ queryKey: ['financial-stats'] })
-      closeDialog()
+      setIsDialogOpen(false)
+      showToast('Student admitted successfully!')
+      // Navigate to the newly created student profile
+      if (res?.student?.id) {
+        navigate(`/students/${res.student.id}`)
+      }
     },
     onError: (err: any) => {
       setFormError(err.message || 'Failed to admit student')
     },
   })
+
+  // Archive / status toggle mutation
+  const archiveMutation = useMutation({
+    mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) =>
+      api.patch(`/students/${id}/status`, { isActive }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['students'] })
+      queryClient.invalidateQueries({ queryKey: ['financial-stats'] })
+      setArchiveTarget(null)
+      showToast('Student status updated successfully!')
+    },
+  })
+
+  const showToast = (msg: string) => {
+    setToastMsg(msg)
+    setTimeout(() => setToastMsg(''), 4000)
+  }
 
   const openCreateDialog = () => {
     setFullName('')
@@ -72,11 +126,6 @@ export const StudentsPage: React.FC = () => {
     setTotalFees('25000')
     setFormError('')
     setIsDialogOpen(true)
-  }
-
-  const closeDialog = () => {
-    setIsDialogOpen(false)
-    setFormError('')
   }
 
   const handleCreate = (e: React.FormEvent) => {
@@ -103,19 +152,17 @@ export const StudentsPage: React.FC = () => {
     })
   }
 
-  const filteredStudents = students.filter((s: any) => {
-    const q = searchQuery.toLowerCase().trim()
-    if (!q) return true
-    return (
-      s.fullName?.toLowerCase().includes(q) ||
-      s.rollNumber?.toLowerCase().includes(q) ||
-      s.parentPhone?.includes(q) ||
-      s.standard?.toLowerCase().includes(q)
-    )
-  })
-
   return (
     <div className="space-y-6">
+      {/* Toast Notification */}
+      {toastMsg && (
+        <div className="fixed bottom-6 right-6 z-50 p-4 bg-foreground text-background rounded-xl shadow-lg flex items-center gap-2 text-sm font-medium animate-in fade-in slide-in-from-bottom-4">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+          {toastMsg}
+        </div>
+      )}
+
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
@@ -123,7 +170,7 @@ export const StudentsPage: React.FC = () => {
             Student Management
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Admit students, maintain bio records, and track fee commitments.
+            Admit students, maintain bio records, manage photographs, and track fee commitments.
           </p>
         </div>
         <Button onClick={openCreateDialog} className="gap-2">
@@ -133,35 +180,69 @@ export const StudentsPage: React.FC = () => {
       </div>
 
       {/* Search & Filter Toolbar */}
-      <div className="flex items-center gap-3 bg-card p-3 rounded-xl border">
-        <div className="relative flex-1">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-card p-3 rounded-xl border">
+        {/* Search Input */}
+        <div className="relative md:col-span-2">
           <Search className="w-4 h-4 absolute left-3 top-3 text-muted-foreground" />
           <Input
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by student name, roll number, phone or class..."
+            placeholder="Search by student name, roll number, phone or ID..."
             className="pl-9 bg-background"
           />
         </div>
+
+        {/* Class / Standard Filter */}
+        <div className="flex items-center gap-1.5 bg-background border rounded-md px-2.5">
+          <Filter className="w-3.5 h-3.5 text-muted-foreground" />
+          <select
+            value={standardFilter}
+            onChange={(e) => setStandardFilter(e.target.value)}
+            className="w-full h-9 bg-transparent text-xs font-medium focus:outline-none cursor-pointer"
+          >
+            <option value="ALL">All Classes / Standards</option>
+            <option value="Class 8">Class 8</option>
+            <option value="Class 9">Class 9</option>
+            <option value="Class 10">Class 10</option>
+            <option value="Class 11 Science">Class 11 Science</option>
+            <option value="Class 12 Science">Class 12 Science</option>
+            <option value="Class 11 Commerce">Class 11 Commerce</option>
+            <option value="Class 12 Commerce">Class 12 Commerce</option>
+            <option value="MHT-CET / JEE Foundation">MHT-CET / JEE</option>
+          </select>
+        </div>
+
+        {/* Active / Archive Status Filter */}
+        <div className="flex items-center bg-background border rounded-md px-2.5">
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as any)}
+            className="w-full h-9 bg-transparent text-xs font-medium focus:outline-none cursor-pointer"
+          >
+            <option value="true">Active Students Only</option>
+            <option value="false">Archived / Inactive Only</option>
+            <option value="ALL">All (Active & Archived)</option>
+          </select>
+        </div>
       </div>
 
-      {/* Student Table */}
+      {/* Student Records Table */}
       <Card>
-        <CardHeader className="py-4">
+        <CardHeader className="py-4 flex flex-row items-center justify-between">
           <CardTitle className="text-base font-semibold">
-            Enrolled Students ({filteredStudents.length})
+            Registered Students ({students.length})
           </CardTitle>
         </CardHeader>
         <CardContent>
           {isLoading ? (
             <p className="text-sm text-muted-foreground py-8 text-center">Loading student records...</p>
-          ) : filteredStudents.length === 0 ? (
+          ) : students.length === 0 ? (
             <div className="py-12 text-center border rounded-lg border-dashed">
               <Users className="w-12 h-12 text-muted-foreground mx-auto mb-3 opacity-40" />
               <p className="text-sm font-semibold">No students found</p>
               <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
-                {searchQuery
-                  ? 'No records match your search filter.'
+                {searchQuery || standardFilter !== 'ALL'
+                  ? 'No records match your active search and class filters.'
                   : 'Start by clicking "New Admission" above to enroll your first student.'}
               </p>
             </div>
@@ -169,42 +250,104 @@ export const StudentsPage: React.FC = () => {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-12">Photo</TableHead>
                   <TableHead>Roll No.</TableHead>
                   <TableHead>Student Name</TableHead>
-                  <TableHead>Standard / Course</TableHead>
+                  <TableHead>Standard</TableHead>
+                  <TableHead>Branch</TableHead>
                   <TableHead>Parent Phone</TableHead>
-                  <TableHead>Total Agreed Fees</TableHead>
-                  <TableHead>Paid Fees</TableHead>
-                  <TableHead>Pending Dues</TableHead>
+                  <TableHead>Total Fees</TableHead>
+                  <TableHead>Balance Due</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredStudents.map((s: any) => (
-                  <TableRow key={s.id}>
+                {students.map((s: any) => (
+                  <TableRow key={s.id} className="hover:bg-muted/40 transition-colors">
+                    {/* Photo Thumbnail */}
+                    <TableCell>
+                      <div className="w-8 h-8 rounded-full overflow-hidden bg-muted flex items-center justify-center border text-xs">
+                        {s.photoUrl ? (
+                          <img
+                            src={s.photoUrl}
+                            alt=""
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <User className="w-4 h-4 text-muted-foreground" />
+                        )}
+                      </div>
+                    </TableCell>
+
                     <TableCell className="font-mono text-xs font-semibold">{s.rollNumber}</TableCell>
-                    <TableCell className="font-medium text-foreground">{s.fullName}</TableCell>
+                    <TableCell className="font-semibold text-foreground">
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/students/${s.id}`)}
+                        className="hover:underline text-left"
+                      >
+                        {s.fullName}
+                      </button>
+                    </TableCell>
                     <TableCell>{s.standard}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground font-medium">
+                      {s.branchName}
+                    </TableCell>
                     <TableCell className="font-mono text-xs">{s.parentPhone}</TableCell>
                     <TableCell className="font-medium">{formatCurrency(s.totalFees)}</TableCell>
-                    <TableCell className="text-emerald-600 font-medium">
-                      {formatCurrency(s.paidFees || 0)}
-                    </TableCell>
-                    <TableCell className="text-rose-600 font-medium">
+                    <TableCell className="text-rose-600 font-bold">
                       {formatCurrency(s.pendingFees || 0)}
                     </TableCell>
                     <TableCell>
                       <Badge
                         variant={
-                          s.pendingFees === 0
+                          !s.isActive
+                            ? 'outline'
+                            : s.pendingFees === 0
                             ? 'success'
                             : s.paidFees > 0
                             ? 'warning'
                             : 'danger'
                         }
                       >
-                        {s.pendingFees === 0 ? 'Settled' : s.paidFees > 0 ? 'Partial' : 'Unpaid'}
+                        {!s.isActive
+                          ? 'Archived'
+                          : s.pendingFees === 0
+                          ? 'Settled'
+                          : s.paidFees > 0
+                          ? 'Partial'
+                          : 'Unpaid'}
                       </Badge>
+                    </TableCell>
+                    <TableCell className="text-right space-x-1.5">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => navigate(`/students/${s.id}`)}
+                        className="h-8 gap-1 text-xs"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        Profile
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => navigate('/fees/collect')}
+                        className="h-8 gap-1 text-xs"
+                      >
+                        <CreditCard className="w-3.5 h-3.5" />
+                        Fee
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setArchiveTarget(s)}
+                        className="h-8 px-2 text-muted-foreground hover:text-foreground"
+                        title={s.isActive ? 'Archive Student' : 'Reactivate Student'}
+                      >
+                        <Archive className="w-3.5 h-3.5" />
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -249,7 +392,7 @@ export const StudentsPage: React.FC = () => {
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold">Class / Standard *</label>
+                  <label className="text-xs font-semibold">Class / Course *</label>
                   <select
                     value={standard}
                     onChange={(e) => setStandard(e.target.value)}
@@ -269,24 +412,39 @@ export const StudentsPage: React.FC = () => {
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold">Parent Phone (10 digits) *</label>
+                  <label className="text-xs font-semibold">Parent Phone *</label>
                   <Input
                     value={parentPhone}
                     onChange={(e) => setParentPhone(e.target.value)}
-                    placeholder="9876543210"
+                    placeholder="10-digit mobile"
                     maxLength={10}
                     required
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold">Student Phone (Optional)</label>
+                  <label className="text-xs font-semibold">Student Phone</label>
                   <Input
                     value={studentPhone}
                     onChange={(e) => setStudentPhone(e.target.value)}
-                    placeholder="9876543210"
+                    placeholder="10-digit mobile"
                     maxLength={10}
                   />
                 </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold">Branch Location *</label>
+                <select
+                  value={branchId}
+                  onChange={(e) => setBranchId(e.target.value)}
+                  className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none"
+                >
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name} ({b.code})
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="space-y-1.5">
@@ -299,10 +457,13 @@ export const StudentsPage: React.FC = () => {
                   step={500}
                   required
                 />
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  An initial 3-installment plan (40% admission, 30% month 2, 30% month 3) will be auto-generated.
+                </p>
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold">Address (Optional)</label>
+                <label className="text-xs font-semibold">Address</label>
                 <Input
                   value={address}
                   onChange={(e) => setAddress(e.target.value)}
@@ -312,7 +473,7 @@ export const StudentsPage: React.FC = () => {
             </div>
 
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={closeDialog}>
+              <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
                 Cancel
               </Button>
               <Button type="submit" disabled={createMutation.isPending}>
@@ -322,6 +483,36 @@ export const StudentsPage: React.FC = () => {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Archive / Reactivate Confirmation Dialog */}
+      <AlertDialog open={Boolean(archiveTarget)} onOpenChange={() => setArchiveTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {archiveTarget?.isActive ? 'Archive Student?' : 'Reactivate Student?'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {archiveTarget?.isActive
+                ? `Archiving ${archiveTarget?.fullName} will safely remove them from the active batch list. All historical financial ledgers, receipts, and installments will be permanently preserved.`
+                : `Reactivating ${archiveTarget?.fullName} will restore them to active status in this academic session.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() =>
+                archiveMutation.mutate({
+                  id: archiveTarget.id,
+                  isActive: !archiveTarget.isActive,
+                })
+              }
+              className={archiveTarget?.isActive ? 'bg-destructive text-destructive-foreground' : 'bg-primary'}
+            >
+              Confirm
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

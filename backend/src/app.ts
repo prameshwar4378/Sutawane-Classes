@@ -22,6 +22,10 @@ export function createApp(): Application {
   )
   app.use(express.json())
 
+  // Serve persistent photos and attachments
+  app.use('/api/uploads/photos', express.static(storagePaths.photosDir))
+  app.use('/api/uploads/attachments', express.static(storagePaths.attachmentsDir))
+
   // API Routes
   app.use('/api/health', healthRouter)
   app.use('/api/branches', branchRouter)
