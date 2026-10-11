@@ -41,8 +41,11 @@ import {
   CheckCircle2,
   AlertCircle,
   IndianRupee,
+  Sparkles,
+  History,
 } from 'lucide-react'
 import { formatCurrency, formatDate, formatDateLong } from '@/lib/utils'
+import { PromoteStudentModal } from '@/components/PromoteStudentModal'
 
 export const StudentDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>()
@@ -53,6 +56,7 @@ export const StudentDetailPage: React.FC = () => {
   // Dialog states
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
   const [isArchiveDialogOpen, setIsArchiveDialogOpen] = useState(false)
+  const [isPromoteDialogOpen, setIsPromoteDialogOpen] = useState(false)
   const [selectedReceipt, setSelectedReceipt] = useState<any>(null)
   const [toastMsg, setToastMsg] = useState('')
 
@@ -216,7 +220,15 @@ export const StudentDetailPage: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            onClick={() => setIsPromoteDialogOpen(true)}
+            variant="outline"
+            className="gap-2 border-amber-500 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 font-medium"
+          >
+            <Sparkles className="w-4 h-4 text-amber-500" />
+            Promote to Next Session
+          </Button>
           <Button
             onClick={() => navigate('/fees/collect')}
             className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
@@ -502,6 +514,102 @@ export const StudentDetailPage: React.FC = () => {
               )}
             </CardContent>
           </Card>
+
+          {/* Previous Session Carried-Forward Dues Card */}
+          {student.previousSessionDues && student.previousSessionDues.length > 0 && (
+            <Card className="border-amber-200 bg-amber-50/20 dark:bg-amber-950/10">
+              <CardHeader className="py-4">
+                <CardTitle className="text-base font-semibold flex items-center gap-2 text-amber-700 dark:text-amber-400">
+                  <ClockAlert className="w-4 h-4" />
+                  Carried-Forward Dues from Previous Sessions
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Original Session</TableHead>
+                      <TableHead>Description / Reference</TableHead>
+                      <TableHead>Carried Amount</TableHead>
+                      <TableHead>Recovered</TableHead>
+                      <TableHead>Balance Due</TableHead>
+                      <TableHead className="text-right">Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {student.previousSessionDues.map((due: any) => (
+                      <TableRow key={due.id}>
+                        <TableCell className="font-semibold text-foreground">
+                          {due.originalSessionName || 'Prior Session'}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {due.description || 'Carried forward unpaid tuition'}
+                        </TableCell>
+                        <TableCell className="font-medium text-foreground">
+                          {formatCurrency(due.outstandingAmount)}
+                        </TableCell>
+                        <TableCell className="text-emerald-600 font-medium">
+                          {formatCurrency(due.collectedAmount)}
+                        </TableCell>
+                        <TableCell className="text-rose-600 font-bold">
+                          {formatCurrency(due.balanceRemaining)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Badge variant={due.balanceRemaining === 0 ? 'success' : 'danger'}>
+                            {due.balanceRemaining === 0 ? 'Settled' : 'Pending Recovery'}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Academic Journey / Multi-Session History Card */}
+          {student.allAdmissions && student.allAdmissions.length > 0 && (
+            <Card>
+              <CardHeader className="py-4">
+                <CardTitle className="text-base font-semibold flex items-center gap-2">
+                  <History className="w-4 h-4 text-primary" />
+                  Academic Session Progression History ({student.allAdmissions.length} Sessions)
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Academic Session</TableHead>
+                      <TableHead>Class / Standard</TableHead>
+                      <TableHead>Branch</TableHead>
+                      <TableHead>Roll Number</TableHead>
+                      <TableHead>Enrolled Date</TableHead>
+                      <TableHead className="text-right">Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {student.allAdmissions.map((adm: any) => (
+                      <TableRow key={adm.id}>
+                        <TableCell className="font-semibold text-foreground">
+                          {adm.sessionName}
+                        </TableCell>
+                        <TableCell className="font-medium">{adm.standard}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">{adm.branchName}</TableCell>
+                        <TableCell className="font-mono text-xs">{adm.rollNumber}</TableCell>
+                        <TableCell className="text-xs">{formatDate(adm.admissionDate)}</TableCell>
+                        <TableCell className="text-right">
+                          <Badge variant={adm.isActive ? 'success' : 'outline'}>
+                            {adm.isActive ? 'Active Batch' : 'Completed / Archived'}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
         </div>
       </div>
 
@@ -674,6 +782,21 @@ export const StudentDetailPage: React.FC = () => {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Promote Student Modal */}
+      {student && (
+        <PromoteStudentModal
+          isOpen={isPromoteDialogOpen}
+          onClose={() => setIsPromoteDialogOpen(false)}
+          studentId={student.id}
+          studentName={student.fullName}
+          currentAdmission={admission}
+          onSuccess={(msg) => {
+            showToast(msg)
+            refetch()
+          }}
+        />
+      )}
     </div>
   )
 }

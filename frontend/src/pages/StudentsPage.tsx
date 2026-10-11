@@ -42,8 +42,11 @@ import {
   User,
   Filter,
   CheckCircle2,
+  Sparkles,
 } from 'lucide-react'
 import { formatCurrency } from '@/lib/utils'
+import { PromoteStudentModal } from '@/components/PromoteStudentModal'
+import { BatchPromoteModal } from '@/components/BatchPromoteModal'
 
 export const StudentsPage: React.FC = () => {
   const navigate = useNavigate()
@@ -56,6 +59,11 @@ export const StudentsPage: React.FC = () => {
   const [standardFilter, setStandardFilter] = useState('ALL')
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'true' | 'false'>('true')
   const [toastMsg, setToastMsg] = useState('')
+
+  // Promotion states
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [isBatchPromoteOpen, setIsBatchPromoteOpen] = useState(false)
+  const [studentToPromote, setStudentToPromote] = useState<any>(null)
 
   // Form states for new admission
   const [fullName, setFullName] = useState('')
@@ -114,6 +122,22 @@ export const StudentsPage: React.FC = () => {
     setToastMsg(msg)
     setTimeout(() => setToastMsg(''), 4000)
   }
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    )
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedIds.length === students.length && students.length > 0) {
+      setSelectedIds([])
+    } else {
+      setSelectedIds(students.map((s: any) => s.id))
+    }
+  }
+
+  const selectedStudentsList = students.filter((s: any) => selectedIds.includes(s.id))
 
   const openCreateDialog = () => {
     setFullName('')
@@ -226,6 +250,38 @@ export const StudentsPage: React.FC = () => {
         </div>
       </div>
 
+      {/* Batch Actions Bar */}
+      {selectedIds.length > 0 && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-xl">
+          <div className="flex items-center gap-2">
+            <Badge variant="warning" className="px-2.5 py-1 text-xs font-bold">
+              {selectedIds.length} Selected
+            </Badge>
+            <span className="text-xs font-semibold text-foreground">
+              students chosen for next-session promotion or batch operations
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              onClick={() => setIsBatchPromoteOpen(true)}
+              className="gap-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs shadow-sm"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              Batch Promote ({selectedIds.length}) to Next Session
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setSelectedIds([])}
+              className="text-xs"
+            >
+              Deselect All
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Student Records Table */}
       <Card>
         <CardHeader className="py-4 flex flex-row items-center justify-between">
@@ -250,6 +306,15 @@ export const StudentsPage: React.FC = () => {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-8">
+                    <input
+                      type="checkbox"
+                      checked={students.length > 0 && selectedIds.length === students.length}
+                      onChange={toggleSelectAll}
+                      className="w-4 h-4 rounded text-primary border-gray-300 focus:ring-primary cursor-pointer"
+                      title="Select / Deselect All Visible"
+                    />
+                  </TableHead>
                   <TableHead className="w-12">Photo</TableHead>
                   <TableHead>Roll No.</TableHead>
                   <TableHead>Student Name</TableHead>
@@ -264,7 +329,22 @@ export const StudentsPage: React.FC = () => {
               </TableHeader>
               <TableBody>
                 {students.map((s: any) => (
-                  <TableRow key={s.id} className="hover:bg-muted/40 transition-colors">
+                  <TableRow
+                    key={s.id}
+                    className={`hover:bg-muted/40 transition-colors ${
+                      selectedIds.includes(s.id) ? 'bg-amber-500/10' : ''
+                    }`}
+                  >
+                    {/* Checkbox Column */}
+                    <TableCell className="w-8">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(s.id)}
+                        onChange={() => toggleSelect(s.id)}
+                        className="w-4 h-4 rounded text-primary border-gray-300 focus:ring-primary cursor-pointer"
+                      />
+                    </TableCell>
+
                     {/* Photo Thumbnail */}
                     <TableCell>
                       <div className="w-8 h-8 rounded-full overflow-hidden bg-muted flex items-center justify-center border text-xs">
@@ -321,6 +401,16 @@ export const StudentsPage: React.FC = () => {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right space-x-1.5">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setStudentToPromote(s)}
+                        className="h-8 gap-1 text-xs border-amber-500/60 text-amber-600 dark:text-amber-400 hover:bg-amber-500/10"
+                        title="Promote to Next Session"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                        Promote
+                      </Button>
                       <Button
                         variant="outline"
                         size="sm"
@@ -513,6 +603,46 @@ export const StudentsPage: React.FC = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Single Student Promotion Modal */}
+      {studentToPromote && (
+        <PromoteStudentModal
+          isOpen={Boolean(studentToPromote)}
+          onClose={() => setStudentToPromote(null)}
+          studentId={studentToPromote.id}
+          studentName={studentToPromote.fullName}
+          currentAdmission={{
+            id: studentToPromote.admissionId,
+            rollNumber: studentToPromote.rollNumber,
+            standard: studentToPromote.standard,
+            branch: {
+              id: studentToPromote.branchId,
+              name: studentToPromote.branchName,
+              code: studentToPromote.branchCode,
+            },
+            session: {
+              id: studentToPromote.sessionId,
+              name: studentToPromote.sessionName,
+            },
+          }}
+          onSuccess={(msg) => {
+            showToast(msg)
+            queryClient.invalidateQueries({ queryKey: ['students'] })
+          }}
+        />
+      )}
+
+      {/* Batch Promotion Modal */}
+      <BatchPromoteModal
+        isOpen={isBatchPromoteOpen}
+        onClose={() => setIsBatchPromoteOpen(false)}
+        selectedStudents={selectedStudentsList}
+        onSuccess={(msg) => {
+          showToast(msg)
+          setSelectedIds([])
+          queryClient.invalidateQueries({ queryKey: ['students'] })
+        }}
+      />
     </div>
   )
 }

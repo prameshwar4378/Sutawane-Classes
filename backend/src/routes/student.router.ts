@@ -187,6 +187,13 @@ studentRouter.get('/:id', async (req: Request, res: Response) => {
           },
           orderBy: { paymentDate: 'desc' },
         },
+        previousSessionDues: {
+          include: {
+            originalSession: true,
+            currentSession: true,
+          },
+          orderBy: { createdAt: 'desc' },
+        },
       },
     })
 
@@ -282,6 +289,16 @@ studentRouter.get('/:id', async (req: Request, res: Response) => {
         sessionName: a.session.name,
         isActive: a.isActive,
         admissionDate: a.admissionDate.toISOString(),
+      })),
+      previousSessionDues: student.previousSessionDues.map((d) => ({
+        id: d.id,
+        outstandingAmount: d.outstandingAmount,
+        collectedAmount: d.collectedAmount,
+        balanceRemaining: Math.max(0, d.outstandingAmount - d.collectedAmount),
+        description: d.description,
+        originalSessionName: d.originalSession?.name,
+        currentSessionName: d.currentSession?.name,
+        createdAt: d.createdAt.toISOString(),
       })),
     })
   } catch (error) {
@@ -761,5 +778,408 @@ studentRouter.get('/stats/financial', async (req: Request, res: Response) => {
     })
   } catch (error) {
     res.status(500).json({ error: 'Failed to calculate financial statistics', details: String(error) })
+  }
+})
+
+// Suggest next standard helper
+export function suggestNextStandard(standard: string): string {
+  const map: Record<string, string> = {
+    'Class 8': 'Class 9',
+    'Class 9': 'Class 10',
+    'Class 10': 'Class 11 Science',
+    'Class 11 Science': 'Class 12 Science',
+    'Class 11 Commerce': 'Class 12 Commerce',
+    'Class 11': 'Class 12',
+    'MHT-CET / JEE Foundation': 'MHT-CET / JEE Target Batch',
+  }
+  return map[standard] || standard
+}
+
+// GET preview for student promotion
+studentRouter.get('/:id/promotion-preview', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id)
+    const { targetSessionId } = req.query
+
+    const student = await prisma.student.findUnique({
+      where: { id },
+      include: {
+        admissions: {
+          include: {
+            branch: true,
+            session: true,
+            feePlan: true,
+          },
+          orderBy: { createdAt: 'desc' },
+        },
+        payments: {
+          where: { isReversed: false },
+        },
+      },
+    })
+
+    if (!student || student.admissions.length === 0) {
+      return res.status(404).json({ error: 'Student or admission record not found' })
+    }
+
+    const currentAdmission = student.admissions[0]
+    const currentFeePlan = currentAdmission.feePlan
+    const totalFees = currentFeePlan?.netPayable || currentFeePlan?.totalFees || 0
+    const totalPaid = student.payments.reduce((acc, p) => acc + p.totalAmount, 0)
+    const currentPendingDue = Math.max(0, totalFees - totalPaid)
+
+    const suggestedStandard = suggestNextStandard(currentAdmission.standard)
+
+    // Check if student already promoted to target session
+    let isAlreadyPromoted = false
+    if (targetSessionId) {
+      const existingInTarget = student.admissions.find((a) => a.sessionId === String(targetSessionId))
+      if (existingInTarget) isAlreadyPromoted = true
+    }
+
+    // Auto-generate suggested roll number for next session
+    const suggestedRoll = `${currentAdmission.rollNumber}-N`
+
+    res.json({
+      studentId: student.id,
+      fullName: student.fullName,
+      studentCode: student.studentCode,
+      currentBranch: currentAdmission.branch,
+      currentSession: currentAdmission.session,
+      currentStandard: currentAdmission.standard,
+      currentRollNumber: currentAdmission.rollNumber,
+      currentPendingDue,
+      suggestedStandard,
+      suggestedRoll,
+      suggestedFees: totalFees > 0 ? totalFees : 30000,
+      isAlreadyPromoted,
+    })
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to generate promotion preview', details: String(error) })
+  }
+})
+
+// POST promote a student to next academic session
+studentRouter.post('/:id/promote', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id)
+    const {
+      targetSessionId,
+      targetBranchId,
+      targetStandard,
+      newRollNumber,
+      newTotalFees,
+      carryForwardDue = true,
+      dueNotes,
+    } = req.body
+
+    if (!targetSessionId || !targetStandard || !newRollNumber) {
+      return res.status(400).json({
+        error: 'Target session, target standard, and new roll number are required for promotion',
+      })
+    }
+
+    const student = await prisma.student.findUnique({
+      where: { id },
+      include: {
+        admissions: {
+          include: {
+            session: true,
+            branch: true,
+            feePlan: true,
+          },
+          orderBy: { createdAt: 'desc' },
+        },
+        payments: {
+          where: { isReversed: false },
+        },
+      },
+    })
+
+    if (!student || student.admissions.length === 0) {
+      return res.status(404).json({ error: 'Student or previous admission not found' })
+    }
+
+    const previousAdmission = student.admissions[0]
+    const branchId = targetBranchId || previousAdmission.branchId
+
+    // Verify student is not already admitted in target session
+    const existingInTarget = await prisma.studentAdmission.findFirst({
+      where: {
+        studentId: id,
+        sessionId: targetSessionId,
+      },
+    })
+    if (existingInTarget) {
+      return res.status(409).json({
+        error: `Student ${student.fullName} is already admitted in the selected academic session.`,
+      })
+    }
+
+    // Verify roll number uniqueness in target branch and session
+    const rollCollision = await prisma.studentAdmission.findFirst({
+      where: {
+        branchId,
+        sessionId: targetSessionId,
+        rollNumber: String(newRollNumber).trim(),
+      },
+    })
+    if (rollCollision) {
+      return res.status(409).json({
+        error: `Roll number ${newRollNumber} is already in use in the target branch and session.`,
+      })
+    }
+
+    // Calculate pending dues from previous session
+    const prevPlanFees = previousAdmission.feePlan?.netPayable || previousAdmission.feePlan?.totalFees || 0
+    const prevPaid = student.payments.reduce((sum, p) => sum + p.totalAmount, 0)
+    const prevPendingDue = Math.max(0, prevPlanFees - prevPaid)
+
+    const numFees = Number(newTotalFees) || 0
+
+    // Transaction to create new admission, fee plan, and previous session due record
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. If previous dues exist and carry forward is enabled, record PreviousSessionDue
+      let dueRecord = null
+      if (carryForwardDue && prevPendingDue > 0) {
+        dueRecord = await tx.previousSessionDue.create({
+          data: {
+            studentId: id,
+            originalSessionId: previousAdmission.sessionId,
+            currentSessionId: targetSessionId,
+            outstandingAmount: prevPendingDue,
+            description:
+              dueNotes ||
+              `Outstanding fee balance carried forward from ${previousAdmission.session.name} (${previousAdmission.standard})`,
+          },
+        })
+      }
+
+      // 2. Create new StudentAdmission in target session
+      const newAdmission = await tx.studentAdmission.create({
+        data: {
+          studentId: id,
+          branchId,
+          sessionId: targetSessionId,
+          rollNumber: String(newRollNumber).trim(),
+          standard: String(targetStandard).trim(),
+          admissionDate: new Date(),
+          isActive: true,
+        },
+        include: {
+          session: true,
+          branch: true,
+        },
+      })
+
+      // 3. Create fresh FeePlan for target session
+      const newFeePlan = await tx.feePlan.create({
+        data: {
+          admissionId: newAdmission.id,
+          sessionId: targetSessionId,
+          totalFees: numFees,
+          totalDiscount: 0,
+          netPayable: numFees,
+        },
+      })
+
+      // 4. Create standard 3 installments for new session
+      const now = new Date()
+      const inst1 = Math.round(numFees * 0.4)
+      const inst2 = Math.round(numFees * 0.3)
+      const inst3 = numFees - (inst1 + inst2)
+
+      await tx.installment.createMany({
+        data: [
+          {
+            feePlanId: newFeePlan.id,
+            installmentNo: 1,
+            label: 'Installment 1 (Session Admission)',
+            dueDate: now,
+            amountDue: inst1,
+          },
+          {
+            feePlanId: newFeePlan.id,
+            installmentNo: 2,
+            label: 'Installment 2',
+            dueDate: new Date(now.getTime() + 45 * 24 * 3600 * 1000),
+            amountDue: inst2,
+          },
+          {
+            feePlanId: newFeePlan.id,
+            installmentNo: 3,
+            label: 'Installment 3 (Final)',
+            dueDate: new Date(now.getTime() + 90 * 24 * 3600 * 1000),
+            amountDue: inst3,
+          },
+        ],
+      })
+
+      return {
+        newAdmission,
+        newFeePlan,
+        dueRecord,
+      }
+    })
+
+    res.status(201).json({
+      success: true,
+      message: `Successfully promoted ${student.fullName} to ${result.newAdmission.standard} for session ${result.newAdmission.session.name}!`,
+      admission: result.newAdmission,
+      previousDueRecorded: result.dueRecord ? prevPendingDue : 0,
+    })
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to promote student' })
+  }
+})
+
+// POST batch promote students to next session
+studentRouter.post('/batch-promote', async (req: Request, res: Response) => {
+  try {
+    const {
+      studentIds,
+      targetSessionId,
+      targetStandard,
+      targetBranchId,
+      defaultTotalFees,
+      carryForwardDues = true,
+    } = req.body
+
+    if (!Array.isArray(studentIds) || studentIds.length === 0 || !targetSessionId || !targetStandard) {
+      return res.status(400).json({
+        error: 'Student IDs array, target session, and target standard are required for batch promotion',
+      })
+    }
+
+    const numFees = Number(defaultTotalFees) || 0
+    const promotedStudents: string[] = []
+    const skippedStudents: Array<{ id: string; name: string; reason: string }> = []
+
+    for (const sId of studentIds) {
+      const student = await prisma.student.findUnique({
+        where: { id: sId },
+        include: {
+          admissions: {
+            include: { session: true, feePlan: true },
+            orderBy: { createdAt: 'desc' },
+          },
+          payments: { where: { isReversed: false } },
+        },
+      })
+
+      if (!student || student.admissions.length === 0) {
+        skippedStudents.push({ id: sId, name: sId, reason: 'No student record found' })
+        continue
+      }
+
+      // Check if already in target session
+      const alreadyInTarget = student.admissions.find((a) => a.sessionId === targetSessionId)
+      if (alreadyInTarget) {
+        skippedStudents.push({
+          id: sId,
+          name: student.fullName,
+          reason: 'Already admitted in target session',
+        })
+        continue
+      }
+
+      const prevAdm = student.admissions[0]
+      const branchId = targetBranchId || prevAdm.branchId
+
+      // Generate unique roll number
+      const baseRoll = `${prevAdm.rollNumber}`
+      let newRoll = baseRoll
+      const collision = await prisma.studentAdmission.findFirst({
+        where: { branchId, sessionId: targetSessionId, rollNumber: newRoll },
+      })
+      if (collision) {
+        newRoll = `${baseRoll}-${Date.now().toString().slice(-3)}`
+      }
+
+      // Calculate dues
+      const prevFees = prevAdm.feePlan?.netPayable || prevAdm.feePlan?.totalFees || 0
+      const prevPaid = student.payments.reduce((sum, p) => sum + p.totalAmount, 0)
+      const prevPendingDue = Math.max(0, prevFees - prevPaid)
+
+      // Promote in transaction
+      await prisma.$transaction(async (tx) => {
+        if (carryForwardDues && prevPendingDue > 0) {
+          await tx.previousSessionDue.create({
+            data: {
+              studentId: sId,
+              originalSessionId: prevAdm.sessionId,
+              currentSessionId: targetSessionId,
+              outstandingAmount: prevPendingDue,
+              description: `Batch carry forward balance from ${prevAdm.session.name}`,
+            },
+          })
+        }
+
+        const newAdm = await tx.studentAdmission.create({
+          data: {
+            studentId: sId,
+            branchId,
+            sessionId: targetSessionId,
+            rollNumber: newRoll,
+            standard: targetStandard,
+            admissionDate: new Date(),
+            isActive: true,
+          },
+        })
+
+        const newPlan = await tx.feePlan.create({
+          data: {
+            admissionId: newAdm.id,
+            sessionId: targetSessionId,
+            totalFees: numFees,
+            totalDiscount: 0,
+            netPayable: numFees,
+          },
+        })
+
+        const now = new Date()
+        const inst1 = Math.round(numFees * 0.4)
+        const inst2 = Math.round(numFees * 0.3)
+        const inst3 = numFees - (inst1 + inst2)
+
+        await tx.installment.createMany({
+          data: [
+            {
+              feePlanId: newPlan.id,
+              installmentNo: 1,
+              label: 'Installment 1',
+              dueDate: now,
+              amountDue: inst1,
+            },
+            {
+              feePlanId: newPlan.id,
+              installmentNo: 2,
+              label: 'Installment 2',
+              dueDate: new Date(now.getTime() + 45 * 24 * 3600 * 1000),
+              amountDue: inst2,
+            },
+            {
+              feePlanId: newPlan.id,
+              installmentNo: 3,
+              label: 'Installment 3',
+              dueDate: new Date(now.getTime() + 90 * 24 * 3600 * 1000),
+              amountDue: inst3,
+            },
+          ],
+        })
+      })
+
+      promotedStudents.push(student.fullName)
+    }
+
+    res.status(200).json({
+      success: true,
+      promotedCount: promotedStudents.length,
+      skippedCount: skippedStudents.length,
+      promotedStudents,
+      skippedStudents,
+    })
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Batch promotion failed' })
   }
 })
