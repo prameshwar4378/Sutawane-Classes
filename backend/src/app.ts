@@ -6,6 +6,7 @@ import { healthRouter } from './routes/health.router'
 import { branchRouter } from './routes/branch.router'
 import { sessionRouter } from './routes/session.router'
 import { studentRouter } from './routes/student.router'
+import { feeRouter } from './routes/fee.router'
 import { expenseRouter } from './routes/expense.router'
 import { storagePaths } from './config/index'
 
@@ -31,6 +32,7 @@ export function createApp(): Application {
   app.use('/api/branches', branchRouter)
   app.use('/api/sessions', sessionRouter)
   app.use('/api/students', studentRouter)
+  app.use('/api/fees', feeRouter)
   app.use('/api/expenses', expenseRouter)
 
   // One-click Backup Endpoint

@@ -40,3 +40,70 @@ export function formatDateLong(date: string | Date): string {
     year: "numeric",
   }).format(d)
 }
+
+/**
+ * Convert number to Indian Rupee Words for official receipts
+ */
+export function numberToWordsINR(amount: number): string {
+  if (amount === 0) return 'Rupees Zero Only'
+
+  const a = [
+    '',
+    'One',
+    'Two',
+    'Three',
+    'Four',
+    'Five',
+    'Six',
+    'Seven',
+    'Eight',
+    'Nine',
+    'Ten',
+    'Eleven',
+    'Twelve',
+    'Thirteen',
+    'Fourteen',
+    'Fifteen',
+    'Sixteen',
+    'Seventeen',
+    'Eighteen',
+    'Nineteen',
+  ]
+  const b = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety']
+
+  const num = Math.floor(amount)
+  if (num.toString().length > 9) return `Rupees ${amount} Only`
+
+  function inWords(n: number): string {
+    let str = ''
+    if (n >= 10000000) {
+      str += `${inWords(Math.floor(n / 10000000))} Crore `
+      n %= 10000000
+    }
+    if (n >= 100000) {
+      str += `${inWords(Math.floor(n / 100000))} Lakh `
+      n %= 100000
+    }
+    if (n >= 1000) {
+      str += `${inWords(Math.floor(n / 1000))} Thousand `
+      n %= 1000
+    }
+    if (n >= 100) {
+      str += `${inWords(Math.floor(n / 100))} Hundred `
+      n %= 100
+    }
+    if (n > 0) {
+      if (str !== '') str += 'and '
+      if (n < 20) {
+        str += a[n]
+      } else {
+        str += b[Math.floor(n / 10)]
+        if (n % 10) str += ` ${a[n % 10]}`
+      }
+    }
+    return str.trim()
+  }
+
+  const words = inWords(num)
+  return `Rupees ${words} Only`
+}
