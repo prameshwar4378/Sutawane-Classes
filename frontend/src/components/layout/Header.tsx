@@ -72,7 +72,7 @@ export const Header: React.FC = () => {
   }, [])
 
   return (
-    <header className="h-16 border-b bg-card px-6 flex items-center justify-between sticky top-0 z-40 shadow-sm gap-4">
+    <header className="h-16 flex-shrink-0 border-b bg-card px-6 flex items-center justify-between sticky top-0 z-30 shadow-xs gap-4">
       {/* Brand title & Dynamic Active Logo */}
       <div className="flex items-center gap-3 flex-shrink-0">
         {activeLogoUrl ? (

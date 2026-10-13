@@ -5,11 +5,17 @@ import { Header } from './Header'
 
 export const AppLayout: React.FC = () => {
   return (
-    <div className="flex min-h-screen bg-background font-sans antialiased text-foreground">
+    <div className="flex h-screen w-screen overflow-hidden bg-background font-sans antialiased text-foreground">
+      {/* Permanent Fixed Left Sidebar */}
       <Sidebar />
-      <div className="flex-1 flex flex-col min-w-0">
+
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col h-screen min-w-0 overflow-hidden">
+        {/* Permanent Fixed Top Header */}
         <Header />
-        <main className="flex-1 p-6 overflow-y-auto">
+
+        {/* Scrollable Main Workspace */}
+        <main className="flex-1 overflow-y-auto p-6 scroll-smooth bg-muted/10 focus:outline-none">
           <Outlet />
         </main>
       </div>
