@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
@@ -57,6 +57,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ShieldAlert,
+  X,
 } from 'lucide-react'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { exportStudentsToExcel, exportStudentsToPDF } from '@/lib/exportUtils'
@@ -111,6 +112,11 @@ export const StudentsPage: React.FC = () => {
   const [standardFilter, setStandardFilter] = useState('ALL')
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'true' | 'false'>('true')
   const [feeStatusFilter, setFeeStatusFilter] = useState<'ALL' | 'PAID' | 'PARTIAL' | 'UNPAID' | 'HAS_DUES'>('ALL')
+
+  // Search Suggestions State
+  const [isSearchSuggestionsOpen, setIsSearchSuggestionsOpen] = useState(false)
+  const [searchHighlightIndex, setSearchHighlightIndex] = useState(-1)
+  const searchContainerRef = useRef<HTMLDivElement>(null)
 
   // Sorting
   const [sortField, setSortField] = useState<string>('fullName')
@@ -167,6 +173,33 @@ export const StudentsPage: React.FC = () => {
         search: searchQuery.trim() || undefined,
       }),
   })
+
+  // Auto-suggestions matching query (respects current branch and session filters)
+  const searchSuggestions = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return []
+    return rawStudents
+      .filter((s: any) => {
+        return (
+          s.fullName?.toLowerCase().includes(q) ||
+          s.rollNumber?.toLowerCase().includes(q) ||
+          s.parentPhone?.includes(q) ||
+          (s.studentCode && s.studentCode.toLowerCase().includes(q))
+        )
+      })
+      .slice(0, 8)
+  }, [rawStudents, searchQuery])
+
+  // Click outside to close search suggestions dropdown
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
+        setIsSearchSuggestionsOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   // Create admission mutation
   const createMutation = useMutation({
@@ -543,18 +576,155 @@ export const StudentsPage: React.FC = () => {
       {/* Advanced Filter Toolbar */}
       <div className="bg-card p-3.5 rounded-xl border shadow-sm space-y-3">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
-          {/* Search Input */}
-          <div className="relative sm:col-span-2 lg:col-span-2">
-            <Search className="w-4 h-4 absolute left-3 top-3 text-muted-foreground" />
+          {/* Search Input with Auto-Suggestions Popup */}
+          <div ref={searchContainerRef} className="relative sm:col-span-2 lg:col-span-2">
+            <Search className="w-4 h-4 absolute left-3 top-2.5 text-muted-foreground pointer-events-none" />
             <Input
               value={searchQuery}
               onChange={(e) => {
                 setSearchQuery(e.target.value)
+                setIsSearchSuggestionsOpen(true)
                 setCurrentPage(1)
               }}
-              placeholder="Search by name, roll no, phone or code..."
-              className="pl-9 h-9 text-xs bg-background"
+              onFocus={() => {
+                if (searchQuery.trim()) setIsSearchSuggestionsOpen(true)
+              }}
+              onKeyDown={(e) => {
+                if (!isSearchSuggestionsOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+                  setIsSearchSuggestionsOpen(true)
+                  return
+                }
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault()
+                  setSearchHighlightIndex((prev) => (prev < searchSuggestions.length - 1 ? prev + 1 : 0))
+                } else if (e.key === 'ArrowUp') {
+                  e.preventDefault()
+                  setSearchHighlightIndex((prev) => (prev > 0 ? prev - 1 : searchSuggestions.length - 1))
+                } else if (e.key === 'Enter') {
+                  if (searchHighlightIndex >= 0 && searchHighlightIndex < searchSuggestions.length) {
+                    e.preventDefault()
+                    setSearchQuery(searchSuggestions[searchHighlightIndex].fullName)
+                    setIsSearchSuggestionsOpen(false)
+                  }
+                } else if (e.key === 'Escape') {
+                  setIsSearchSuggestionsOpen(false)
+                }
+              }}
+              placeholder={`Search by name, roll no, phone in ${selectedBranchId === 'ALL' ? 'All Branches' : currentBranch?.name || 'branch'}...`}
+              className="pl-9 pr-8 h-9 text-xs bg-background"
             />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery('')
+                  setIsSearchSuggestionsOpen(false)
+                }}
+                className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+
+            {/* Auto-Suggestions Popup */}
+            {isSearchSuggestionsOpen && searchQuery.trim() && (
+              <div className="absolute left-0 right-0 top-full mt-1.5 z-50 bg-popover text-popover-foreground border rounded-lg shadow-xl overflow-hidden max-h-72 overflow-y-auto divide-y divide-border animate-in fade-in slide-in-from-top-1">
+                <div className="p-1.5 bg-muted/40 text-[10px] font-semibold text-muted-foreground flex items-center justify-between px-3">
+                  <span>
+                    Matching Students in {selectedBranchId === 'ALL' ? 'All Branches' : currentBranch?.name || 'Branch'} ({searchSuggestions.length})
+                  </span>
+                  <span className="text-[10px]">Click to filter table or jump to actions</span>
+                </div>
+
+                {searchSuggestions.length === 0 ? (
+                  <div className="p-3 text-center text-xs text-muted-foreground">
+                    No students matching "{searchQuery}" in {selectedBranchId === 'ALL' ? 'All Branches' : currentBranch?.name || 'selected branch'}.
+                  </div>
+                ) : (
+                  searchSuggestions.map((s: any, idx: number) => {
+                    const isHighlighted = idx === searchHighlightIndex
+                    const overallDue = s.overallPendingAmount !== undefined ? s.overallPendingAmount : s.pendingFees || 0
+                    return (
+                      <div
+                        key={s.id}
+                        className={`p-2 px-3 flex items-center justify-between gap-2 text-xs transition-colors cursor-pointer ${
+                          isHighlighted ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/50'
+                        }`}
+                        onMouseEnter={() => setSearchHighlightIndex(idx)}
+                        onMouseDown={(e) => {
+                          e.preventDefault()
+                          setSearchQuery(s.fullName)
+                          setIsSearchSuggestionsOpen(false)
+                        }}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-6 h-6 rounded-full overflow-hidden bg-muted flex items-center justify-center border text-[9px] flex-shrink-0">
+                            {s.photoUrl ? (
+                              <img src={s.photoUrl} alt="" className="w-full h-full object-cover" />
+                            ) : (
+                              <User className="w-3 h-3 text-muted-foreground" />
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="font-semibold truncate text-foreground flex items-center gap-1.5">
+                              <span>{s.fullName}</span>
+                              <span className="font-mono text-[10px] text-muted-foreground">({s.rollNumber})</span>
+                            </div>
+                            <div className="text-[10px] text-muted-foreground flex items-center gap-1.5">
+                              <span>{s.standard}</span>
+                              {selectedBranchId === 'ALL' && (
+                                <>
+                                  <span>•</span>
+                                  <span className="text-primary font-medium">{s.branchName}</span>
+                                </>
+                              )}
+                              <span>•</span>
+                              <span className="font-mono">Ph: {s.parentPhone}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          {overallDue > 0 ? (
+                            <Badge variant="danger" className="text-[10px] py-0 px-1.5 font-semibold">
+                              Due: {formatCurrency(overallDue)}
+                            </Badge>
+                          ) : (
+                            <Badge variant="success" className="text-[10px] py-0 px-1.5 font-semibold">
+                              Cleared
+                            </Badge>
+                          )}
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onMouseDown={(e) => {
+                              e.stopPropagation()
+                              navigate(`/students/${s.id}`)
+                            }}
+                            className="h-6 px-1.5 text-[10px] gap-1"
+                          >
+                            <Eye className="w-3 h-3" />
+                            Profile
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onMouseDown={(e) => {
+                              e.stopPropagation()
+                              navigate('/fees/collect')
+                            }}
+                            className="h-6 px-1.5 text-[10px] gap-1 bg-emerald-600 hover:bg-emerald-700 text-white"
+                          >
+                            <CreditCard className="w-3 h-3" />
+                            Fee
+                          </Button>
+                        </div>
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+            )}
           </div>
 
           {/* Academic Session Filter */}

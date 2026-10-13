@@ -1,12 +1,16 @@
-import React from 'react'
-import { Building2, Calendar, Activity, CheckCircle2, AlertTriangle } from 'lucide-react'
+import React, { useState, useRef, useEffect, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { Building2, Calendar, Activity, CheckCircle2, AlertTriangle, Search, User, X } from 'lucide-react'
 import { useApp } from '@/context/AppContext'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import type { HealthCheckResponse } from '@sutawane/shared'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
+import { formatCurrency } from '@/lib/utils'
 
 export const Header: React.FC = () => {
+  const navigate = useNavigate()
   const {
     selectedBranchId,
     setSelectedBranchId,
@@ -14,6 +18,7 @@ export const Header: React.FC = () => {
     setSelectedSessionId,
     branches,
     sessions,
+    currentBranch,
   } = useApp()
 
   const { data: health, isSuccess, isError } = useQuery<HealthCheckResponse>({
@@ -22,9 +27,52 @@ export const Header: React.FC = () => {
     refetchInterval: 30000,
   })
 
+  // Global Quick Student Search State
+  const [searchQuery, setSearchQuery] = useState('')
+  const [isSearchOpen, setIsSearchOpen] = useState(false)
+  const searchContainerRef = useRef<HTMLDivElement>(null)
+
+  // Query students matching active branch filter
+  const { data: students = [] } = useQuery<any[]>({
+    queryKey: ['header-quick-search-students', selectedBranchId],
+    queryFn: () =>
+      api.get('/students', {
+        branchId: selectedBranchId !== 'ALL' ? selectedBranchId : undefined,
+        isActive: 'true',
+      }),
+  })
+
+  // Filter matching suggestions
+  const suggestions = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return []
+    return students
+      .filter((s) => {
+        return (
+          s.fullName?.toLowerCase().includes(q) ||
+          s.rollNumber?.toLowerCase().includes(q) ||
+          s.parentPhone?.includes(q) ||
+          (s.studentCode && s.studentCode.toLowerCase().includes(q))
+        )
+      })
+      .slice(0, 6)
+  }, [students, searchQuery])
+
+  // Click outside listener
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
+        setIsSearchOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
   return (
-    <header className="h-16 border-b bg-card px-6 flex items-center justify-between sticky top-0 z-40 shadow-sm">
-      <div className="flex items-center gap-4">
+    <header className="h-16 border-b bg-card px-6 flex items-center justify-between sticky top-0 z-40 shadow-sm gap-4">
+      {/* Brand title */}
+      <div className="flex items-center gap-4 flex-shrink-0">
         <h2 className="text-lg font-bold tracking-tight text-foreground hidden sm:block">
           Sutawane Classes
         </h2>
@@ -33,7 +81,101 @@ export const Header: React.FC = () => {
         </span>
       </div>
 
-      <div className="flex items-center gap-3">
+      {/* Global Quick Search with Autocomplete */}
+      <div ref={searchContainerRef} className="hidden md:flex items-center flex-1 max-w-sm relative">
+        <div className="relative w-full">
+          <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-muted-foreground pointer-events-none" />
+          <Input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value)
+              setIsSearchOpen(true)
+            }}
+            onFocus={() => {
+              if (searchQuery.trim()) setIsSearchOpen(true)
+            }}
+            placeholder={
+              selectedBranchId === 'ALL'
+                ? 'Quick search all branches...'
+                : `Quick search ${currentBranch?.name || 'branch'}...`
+            }
+            className="pl-8 pr-7 h-8 text-xs bg-muted/40 focus:bg-background border-muted rounded-lg w-full"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => {
+                setSearchQuery('')
+                setIsSearchOpen(false)
+              }}
+              className="absolute right-2 top-2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+
+        {/* Floating Suggestion Dropdown */}
+        {isSearchOpen && searchQuery.trim() && (
+          <div className="absolute left-0 right-0 top-full mt-1.5 z-50 bg-popover text-popover-foreground border rounded-lg shadow-xl overflow-hidden divide-y divide-border text-xs animate-in fade-in">
+            <div className="p-1.5 bg-muted/40 text-[10px] font-semibold text-muted-foreground px-3 flex justify-between items-center">
+              <span>
+                Matching Students ({suggestions.length}) • {selectedBranchId === 'ALL' ? 'All Branches' : currentBranch?.name}
+              </span>
+            </div>
+
+            {suggestions.length === 0 ? (
+              <div className="p-3 text-center text-xs text-muted-foreground">
+                No students found in {selectedBranchId === 'ALL' ? 'All Branches' : currentBranch?.name || 'this branch'}.
+              </div>
+            ) : (
+              suggestions.map((s) => (
+                <div
+                  key={s.id}
+                  onMouseDown={() => {
+                    navigate(`/students/${s.id}`)
+                    setIsSearchOpen(false)
+                    setSearchQuery('')
+                  }}
+                  className="p-2 px-3 flex items-center justify-between gap-2 hover:bg-muted/50 cursor-pointer transition-colors"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-6 h-6 rounded-full overflow-hidden bg-muted flex items-center justify-center border text-[9px] flex-shrink-0">
+                      {s.photoUrl ? (
+                        <img src={s.photoUrl} alt="" className="w-full h-full object-cover" />
+                      ) : (
+                        <User className="w-3 h-3 text-muted-foreground" />
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="font-semibold truncate text-foreground flex items-center gap-1">
+                        <span>{s.fullName}</span>
+                        <span className="font-mono text-[10px] text-muted-foreground">({s.rollNumber})</span>
+                      </div>
+                      <div className="text-[10px] text-muted-foreground truncate">
+                        {s.standard} {selectedBranchId === 'ALL' ? `• ${s.branchName}` : ''}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex-shrink-0">
+                    {s.pendingFees > 0 ? (
+                      <span className="text-[10px] text-rose-600 font-bold">
+                        Due: {formatCurrency(s.pendingFees)}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-emerald-600 font-semibold">Cleared</span>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center gap-3 flex-shrink-0">
         {/* Branch Selector */}
         <div className="flex items-center gap-2 bg-muted/60 px-3 py-1.5 rounded-lg border text-sm">
           <Building2 className="w-4 h-4 text-primary" />

@@ -28,13 +28,15 @@ import {
   ClockAlert,
   User,
   History,
+  Building2,
 } from 'lucide-react'
 import { formatCurrency, formatDate, formatDateLong } from '@/lib/utils'
 import { FeeReceiptModal, type ReceiptData } from '@/components/FeeReceiptModal'
+import { StudentSearchAutocomplete } from '@/components/StudentSearchAutocomplete'
 
 export const CollectFeesPage: React.FC = () => {
   const queryClient = useQueryClient()
-  const { selectedBranchId, currentBranch } = useApp()
+  const { selectedBranchId, setSelectedBranchId, branches, currentBranch } = useApp()
 
   // Active view tab: 'collect' | 'history'
   const [activeTab, setActiveTab] = useState<'collect' | 'history'>('collect')
@@ -253,12 +255,39 @@ export const CollectFeesPage: React.FC = () => {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Main Form (2 cols) */}
           <Card className="lg:col-span-2">
-            <CardHeader className="py-4">
-              <CardTitle className="text-base font-semibold">
-                Fee Collection Transaction Entry
-              </CardTitle>
+            <CardHeader className="py-3 px-4 bg-muted/20 border-b flex flex-row items-center justify-between">
+              <div>
+                <CardTitle className="text-base font-semibold">
+                  Fee Collection Transaction Entry
+                </CardTitle>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Record installment payments with automatic FIFO allocation and receipt printing
+                </p>
+              </div>
+
+              {/* In-page Branch Scope Switcher */}
+              <div className="flex items-center gap-1.5 bg-background border rounded-md px-2.5 py-1 text-xs">
+                <Building2 className="w-3.5 h-3.5 text-primary" />
+                <span className="text-[11px] text-muted-foreground font-medium">Branch:</span>
+                <select
+                  value={selectedBranchId}
+                  onChange={(e) => {
+                    setSelectedBranchId(e.target.value)
+                    setSelectedStudentId('')
+                    setAmount('')
+                  }}
+                  className="bg-transparent font-semibold text-xs focus:outline-none cursor-pointer"
+                >
+                  <option value="ALL">All Branches</option>
+                  {branches.filter((b) => b.isActive).map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name} ({b.code})
+                    </option>
+                  ))}
+                </select>
+              </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-4">
               <form onSubmit={handlePaymentSubmit} className="space-y-4">
                 {formError && (
                   <div className="p-3 bg-destructive/10 text-destructive text-sm rounded-md flex items-center gap-2">
@@ -267,39 +296,26 @@ export const CollectFeesPage: React.FC = () => {
                   </div>
                 )}
 
-                {/* 1. Student Selection with Search Filter */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-foreground">
-                    1. Select Student (Search by name, roll no or phone) *
-                  </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                    <div className="relative sm:col-span-1">
-                      <Search className="w-3.5 h-3.5 absolute left-2.5 top-3 text-muted-foreground" />
-                      <Input
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Search student..."
-                        className="pl-8 text-xs h-9 bg-background"
-                      />
-                    </div>
-                    <select
-                      value={selectedStudentId}
-                      onChange={(e) => {
-                        setSelectedStudentId(e.target.value)
-                        setFormError('')
-                      }}
-                      className="sm:col-span-2 h-9 rounded-md border border-input bg-background px-3 text-xs font-medium focus:outline-none"
-                      required
-                    >
-                      <option value="">-- Choose Student ({filteredStudents.length} available) --</option>
-                      {filteredStudents.map((s: any) => (
-                        <option key={s.id} value={s.id}>
-                          {s.fullName} ({s.rollNumber}) — Due: ₹{s.pendingFees} | {s.standard}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
+                {/* 1. Student Selection with Instant Autocomplete Search & Suggestions */}
+                <StudentSearchAutocomplete
+                  label="1. Select Student (Search by name, roll no, phone or course)"
+                  required
+                  branchId={selectedBranchId}
+                  placeholder="Type student name, roll number, or phone..."
+                  selectedStudent={selectedStudent || null}
+                  onSelectStudent={(student) => {
+                    setSelectedStudentId(student.id)
+                    setFormError('')
+                    if (student.pendingFees && student.pendingFees > 0) {
+                      setAmount(String(student.pendingFees))
+                    }
+                  }}
+                  onClearSelection={() => {
+                    setSelectedStudentId('')
+                    setAmount('')
+                    setFormError('')
+                  }}
+                />
 
                 {/* Selected Student Ledger Overview */}
                 {selectedStudent && (
