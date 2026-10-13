@@ -95,13 +95,35 @@ studentRouter.get('/', async (req: Request, res: Response) => {
             payments: {
               where: { isReversed: false },
             },
+            previousSessionDues: true,
+            admissions: {
+              include: {
+                feePlan: {
+                  include: {
+                    installments: {
+                      include: {
+                        allocations: {
+                          include: { payment: true },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
           },
         },
         branch: true,
         session: true,
         feePlan: {
           include: {
-            installments: true,
+            installments: {
+              include: {
+                allocations: {
+                  include: { payment: true },
+                },
+              },
+            },
           },
         },
       },
@@ -113,8 +135,57 @@ studentRouter.get('/', async (req: Request, res: Response) => {
       const feePlan = adm.feePlan
       const totalFees = feePlan?.netPayable || feePlan?.totalFees || 0
 
-      const paidFees = student.payments.reduce((acc, p) => acc + p.totalAmount, 0)
+      // Paid fees specifically for this admission's installments
+      let paidFees = 0
+      if (feePlan?.installments && feePlan.installments.length > 0) {
+        for (const inst of feePlan.installments) {
+          for (const alloc of inst.allocations) {
+            if (!alloc.payment?.isReversed) {
+              paidFees += alloc.allocatedAmount
+            }
+          }
+        }
+      }
+      if (paidFees === 0 && student.payments.length > 0) {
+        // Fallback for direct payments
+        paidFees = student.payments
+          .filter((p) => p.branchId === adm.branchId)
+          .reduce((acc, p) => acc + p.totalAmount, 0)
+      }
+
       const pendingFees = Math.max(0, totalFees - paidFees)
+
+      // Calculate overall pending amount across all admissions and previous dues
+      let allAdmissionsPending = 0
+      for (const a of student.admissions) {
+        const aPlan = a.feePlan
+        const aTotal = aPlan?.netPayable || aPlan?.totalFees || 0
+        let aPaid = 0
+        if (aPlan?.installments && aPlan.installments.length > 0) {
+          for (const inst of aPlan.installments) {
+            for (const alloc of inst.allocations) {
+              if (!alloc.payment?.isReversed) {
+                aPaid += alloc.allocatedAmount
+              }
+            }
+          }
+        }
+        if (aPaid === 0 && student.payments.length > 0) {
+          aPaid = student.payments
+            .filter((p) => p.branchId === a.branchId)
+            .reduce((acc, p) => acc + p.totalAmount, 0)
+        }
+        allAdmissionsPending += Math.max(0, aTotal - aPaid)
+      }
+
+      let prevDuesPending = 0
+      if (student.previousSessionDues) {
+        for (const pd of student.previousSessionDues) {
+          prevDuesPending += Math.max(0, pd.outstandingAmount - pd.collectedAmount)
+        }
+      }
+
+      const overallPendingAmount = allAdmissionsPending + prevDuesPending
 
       return {
         id: student.id,
@@ -137,6 +208,8 @@ studentRouter.get('/', async (req: Request, res: Response) => {
         totalFees,
         paidFees,
         pendingFees,
+        previousDuesPending: prevDuesPending,
+        overallPendingAmount,
         createdAt: adm.createdAt.toISOString(),
       }
     })

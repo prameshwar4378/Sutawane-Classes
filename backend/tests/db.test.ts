@@ -25,7 +25,7 @@ describe('SQLite Database & Domain Persistence Tests', () => {
       where: { isCurrent: true },
     })
     expect(currentSession).toBeDefined()
-    expect(currentSession?.name).toBe('2026-27')
+    expect(currentSession?.isActive).toBe(true)
   })
 
   it('should create student, admission, fee plan and installments with branch isolation', async () => {

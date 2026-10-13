@@ -16,8 +16,8 @@ describe('Phase 5: Installment Fee System & Accounting Rules', () => {
     const r1 = await generateSequentialReceiptNumber(branch!.id, session!.id)
     const r2 = await generateSequentialReceiptNumber(branch!.id, session!.id)
 
-    expect(r1).toContain('SC/2026-27/NGP/REC-')
-    expect(r2).toContain('SC/2026-27/NGP/REC-')
+    expect(r1).toContain(`SC/${session!.name}/NGP/REC-`)
+    expect(r2).toContain(`SC/${session!.name}/NGP/REC-`)
     expect(r1).not.toBe(r2)
 
     // Number part must increment
