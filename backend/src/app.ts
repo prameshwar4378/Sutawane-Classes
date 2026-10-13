@@ -9,6 +9,7 @@ import { studentRouter } from './routes/student.router'
 import { feeRouter } from './routes/fee.router'
 import { expenseRouter } from './routes/expense.router'
 import { dashboardRouter } from './routes/dashboard.router'
+import { settingRouter } from './routes/setting.router'
 import { storagePaths } from './config/index'
 
 export function createApp(): Application {
@@ -36,6 +37,7 @@ export function createApp(): Application {
   app.use('/api/fees', feeRouter)
   app.use('/api/expenses', expenseRouter)
   app.use('/api/dashboard', dashboardRouter)
+  app.use('/api/settings', settingRouter)
 
   // One-click Backup Endpoint
   app.post('/api/system/backup', async (_req: Request, res: Response) => {

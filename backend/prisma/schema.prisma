@@ -31,6 +31,7 @@ model Branch {
   address       String?
   phone         String?
   contactPerson String?
+  logoUrl       String?
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt

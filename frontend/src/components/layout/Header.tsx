@@ -19,6 +19,8 @@ export const Header: React.FC = () => {
     branches,
     sessions,
     currentBranch,
+    settings,
+    activeLogoUrl,
   } = useApp()
 
   const { data: health, isSuccess, isError } = useQuery<HealthCheckResponse>({
@@ -71,14 +73,31 @@ export const Header: React.FC = () => {
 
   return (
     <header className="h-16 border-b bg-card px-6 flex items-center justify-between sticky top-0 z-40 shadow-sm gap-4">
-      {/* Brand title */}
-      <div className="flex items-center gap-4 flex-shrink-0">
-        <h2 className="text-lg font-bold tracking-tight text-foreground hidden sm:block">
-          Sutawane Classes
-        </h2>
-        <span className="text-xs text-muted-foreground px-2 py-0.5 bg-muted rounded hidden md:inline-block">
-          Management System
-        </span>
+      {/* Brand title & Dynamic Active Logo */}
+      <div className="flex items-center gap-3 flex-shrink-0">
+        {activeLogoUrl ? (
+          <div className="w-9 h-9 rounded-lg bg-background border flex items-center justify-center overflow-hidden p-0.5 shadow-xs">
+            <img
+              src={activeLogoUrl}
+              alt="Logo"
+              className="w-full h-full object-contain"
+            />
+          </div>
+        ) : (
+          <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary font-bold text-sm">
+            SC
+          </div>
+        )}
+        <div className="hidden sm:block">
+          <h2 className="text-sm font-bold tracking-tight text-foreground leading-none">
+            {settings?.institute_name || 'Sutawane Classes'}
+          </h2>
+          <span className="text-[10px] text-muted-foreground font-medium block mt-0.5">
+            {selectedBranchId !== 'ALL' && currentBranch
+              ? `${currentBranch.name}`
+              : 'Coaching Management System'}
+          </span>
+        </div>
       </div>
 
       {/* Global Quick Search with Autocomplete */}

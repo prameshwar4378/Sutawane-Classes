@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react'
+import React, { createContext, useContext, useState, useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/api/client'
 
@@ -9,6 +9,7 @@ export interface Branch {
   address?: string | null
   phone?: string | null
   contactPerson?: string | null
+  logoUrl?: string | null
   isActive: boolean
 }
 
@@ -22,6 +23,17 @@ export interface AcademicSession {
   isActive: boolean
 }
 
+export interface InstituteSettings {
+  institute_name: string
+  tagline: string
+  phone: string
+  email: string
+  address: string
+  website: string
+  receipt_footer: string
+  logo_url: string | null
+}
+
 interface AppContextType {
   selectedBranchId: string | 'ALL'
   setSelectedBranchId: (id: string | 'ALL') => void
@@ -31,7 +43,10 @@ interface AppContextType {
   sessions: AcademicSession[]
   currentBranch: Branch | null
   currentSession: AcademicSession | null
+  settings: InstituteSettings | null
+  activeLogoUrl: string | null
   refetchMeta: () => void
+  refetchSettings: () => void
   isLoadingMeta: boolean
 }
 
@@ -80,6 +95,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     },
   })
 
+  // Fetch institute system settings
+  const { data: settings = null, refetch: refetchSettings } = useQuery<InstituteSettings | null>({
+    queryKey: ['institute-settings'],
+    queryFn: async () => {
+      try {
+        return await api.get('/settings')
+      } catch {
+        return null
+      }
+    },
+  })
+
   // Auto-select current session if not selected
   useEffect(() => {
     if (sessions.length > 0 && !selectedSessionId) {
@@ -96,9 +123,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const currentSession = sessions.find((s) => s.id === selectedSessionId) || null
 
+  // Resolve active logo: branch logo if branch selected and has logo, otherwise master logo
+  const activeLogoUrl = useMemo(() => {
+    if (selectedBranchId !== 'ALL' && currentBranch?.logoUrl) {
+      return currentBranch.logoUrl
+    }
+    return settings?.logo_url || null
+  }, [selectedBranchId, currentBranch, settings])
+
   const refetchMeta = () => {
     refetchBranches()
     refetchSessions()
+    refetchSettings()
   }
 
   return (
@@ -112,7 +148,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         sessions,
         currentBranch,
         currentSession,
+        settings,
+        activeLogoUrl,
         refetchMeta,
+        refetchSettings,
         isLoadingMeta: isLoadingBranches || isLoadingSessions,
       }}
     >
