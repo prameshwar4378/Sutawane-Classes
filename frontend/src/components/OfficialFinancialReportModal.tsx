@@ -27,6 +27,7 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { formatCurrency, formatDate, formatDateLong } from '@/lib/utils'
+import { executePrintDocument, executePreviewPDF, executeSavePDF } from '@/lib/electronPrint'
 
 export interface FinancialSummaryData {
   totalCollections: number
@@ -103,6 +104,8 @@ export const OfficialFinancialReportModal: React.FC<OfficialFinancialReportModal
   const [orientation, setOrientation] = useState<Orientation>('PORTRAIT')
   const [scope, setScope] = useState<ReportScope>('ALL')
   const [isPrinting, setIsPrinting] = useState(false)
+  const [isPreviewing, setIsPreviewing] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
 
   // Institute Branding details
   const instituteName = (settings?.institute_name || currentBranch?.name || 'SUTAWANE CLASSES').toUpperCase()
@@ -247,11 +250,14 @@ export const OfficialFinancialReportModal: React.FC<OfficialFinancialReportModal
       `)
       .join('')
 
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5000'
+
     return `
       <!DOCTYPE html>
       <html>
       <head>
         <meta charset="utf-8">
+        <base href="${origin}/">
         <title>${reportTitle} - ${periodLabel}</title>
         <style>
           @page {
@@ -606,42 +612,52 @@ export const OfficialFinancialReportModal: React.FC<OfficialFinancialReportModal
     `
   }
 
-  // Trigger print via hidden iframe
-  const handleExecutePrint = () => {
+  // Unified Printing & PDF Actions
+  const handleExecutePrint = async () => {
     setIsPrinting(true)
-    const printDoc = generatePrintHTML()
-
-    const iframe = document.createElement('iframe')
-    iframe.style.position = 'fixed'
-    iframe.style.right = '0'
-    iframe.style.bottom = '0'
-    iframe.style.width = '0'
-    iframe.style.height = '0'
-    iframe.style.border = '0'
-    iframe.style.visibility = 'hidden'
-    document.body.appendChild(iframe)
-
-    const iframeDoc = iframe.contentWindow?.document
-    if (!iframeDoc) {
-      window.print()
+    try {
+      const printDoc = generatePrintHTML()
+      await executePrintDocument({
+        html: printDoc,
+        title: `Financial_Statement_${auditId}`,
+        landscape: orientation === 'LANDSCAPE',
+        pageSize: 'A4',
+        fallbackBodyClass: 'printing-report',
+      })
+    } finally {
       setIsPrinting(false)
-      return
     }
+  }
 
-    iframeDoc.open()
-    iframeDoc.write(printDoc)
-    iframeDoc.close()
+  const handlePreviewPDF = async () => {
+    setIsPreviewing(true)
+    try {
+      const printDoc = generatePrintHTML()
+      await executePreviewPDF({
+        html: printDoc,
+        title: `Financial_Statement_${auditId}`,
+        landscape: orientation === 'LANDSCAPE',
+        pageSize: 'A4',
+      })
+    } finally {
+      setIsPreviewing(false)
+    }
+  }
 
-    iframe.contentWindow?.focus()
-    setTimeout(() => {
-      iframe.contentWindow?.print()
-      setIsPrinting(false)
-      setTimeout(() => {
-        try {
-          document.body.removeChild(iframe)
-        } catch {}
-      }, 2000)
-    }, 300)
+  const handleSavePDF = async () => {
+    setIsSaving(true)
+    try {
+      const printDoc = generatePrintHTML()
+      const cleanPeriod = (periodLabel || 'Report').replace(/[^a-zA-Z0-9_-]/g, '_')
+      await executeSavePDF({
+        html: printDoc,
+        defaultFilename: `Financial_Statement_${auditId}_${cleanPeriod}.pdf`,
+        landscape: orientation === 'LANDSCAPE',
+        pageSize: 'A4',
+      })
+    } finally {
+      setIsSaving(false)
+    }
   }
 
   if (!isOpen) return null
@@ -713,8 +729,35 @@ export const OfficialFinancialReportModal: React.FC<OfficialFinancialReportModal
               </select>
             </div>
 
+            {/* Save PDF Action */}
+            <Button
+              type="button"
+              onClick={handleSavePDF}
+              disabled={isSaving}
+              variant="outline"
+              className="h-8 px-3 text-xs gap-1.5 border-slate-700 bg-slate-800 text-slate-200 hover:text-white hover:bg-slate-700"
+              title="Save report as A4 PDF document"
+            >
+              <Download className="w-3.5 h-3.5 text-slate-300" />
+              {isSaving ? 'Saving...' : 'Save PDF'}
+            </Button>
+
+            {/* A4 PDF Preview Action */}
+            <Button
+              type="button"
+              onClick={handlePreviewPDF}
+              disabled={isPreviewing}
+              variant="outline"
+              className="h-8 px-3 text-xs gap-1.5 border-blue-500/40 bg-blue-950/60 text-blue-300 hover:bg-blue-900/60 hover:text-white"
+              title="Open full interactive A4 PDF preview in Microsoft Edge / System PDF Viewer"
+            >
+              <FileText className="w-3.5 h-3.5 text-blue-400" />
+              {isPreviewing ? 'Opening...' : 'A4 PDF Preview'}
+            </Button>
+
             {/* Primary Print Button */}
             <Button
+              type="button"
               onClick={handleExecutePrint}
               disabled={isPrinting}
               className="h-8 px-4 bg-emerald-600 hover:bg-emerald-500 text-white font-bold gap-1.5 text-xs shadow-md shadow-emerald-950/40"
@@ -737,6 +780,7 @@ export const OfficialFinancialReportModal: React.FC<OfficialFinancialReportModal
         {/* Live A4 Document Preview Workspace */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-slate-950/70 flex justify-center">
           <div
+            id="printable-financial-report"
             className={`bg-white text-slate-900 shadow-2xl transition-all border border-slate-300 p-8 ${
               orientation === 'PORTRAIT'
                 ? 'w-full max-w-[210mm] min-h-[297mm]'

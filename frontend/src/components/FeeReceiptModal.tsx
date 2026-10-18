@@ -7,10 +7,11 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { Printer, GraduationCap, Scissors } from 'lucide-react'
+import { Printer, GraduationCap, Scissors, FileText, Download, Eye } from 'lucide-react'
 import { formatCurrency, formatDateLong, numberToWordsINR } from '@/lib/utils'
 import { useApp } from '@/context/AppContext'
 import { WhatsAppIcon, openWhatsApp, buildReceiptWhatsAppMessage } from '@/lib/whatsapp'
+import { executePrintDocument, executePreviewPDF, executeSavePDF, isDesktopApp } from '@/lib/electronPrint'
 
 export interface ReceiptData {
   receiptNumber: string
@@ -452,6 +453,9 @@ function buildReceiptSlipHTML(params: {
 export const FeeReceiptModal: React.FC<FeeReceiptModalProps> = ({ receipt, onClose }) => {
   const { settings, activeLogoUrl, branches } = useApp()
   const [viewMode, setViewMode] = useState<'A4_DUAL' | 'STUDENT_ONLY' | 'OFFICE_ONLY'>('A4_DUAL')
+  const [isPrinting, setIsPrinting] = useState(false)
+  const [isPreviewing, setIsPreviewing] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
 
   if (!receipt) return null
 
@@ -466,7 +470,7 @@ export const FeeReceiptModal: React.FC<FeeReceiptModalProps> = ({ receipt, onClo
   const receiptFooter = settings?.receipt_footer || 'Fees once paid are non-refundable. Retain this slip for future verification.'
   const logoUrl = receiptBranch?.logoUrl || activeLogoUrl || settings?.logo_url || null
 
-  const handlePrint = () => {
+  const generatePrintHTML = () => {
     const studentSlipHTML = buildReceiptSlipHTML({
       copyType: 'STUDENT COPY',
       receipt,
@@ -499,11 +503,14 @@ export const FeeReceiptModal: React.FC<FeeReceiptModalProps> = ({ receipt, onClo
       </div>
     `
 
-    const printDocumentHTML = `
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5000'
+
+    return `
       <!DOCTYPE html>
       <html>
       <head>
         <meta charset="utf-8">
+        <base href="${origin}/">
         <title>Receipt_${receipt.receiptNumber}</title>
         <style>
           @page {
@@ -540,39 +547,53 @@ export const FeeReceiptModal: React.FC<FeeReceiptModalProps> = ({ receipt, onClo
       </body>
       </html>
     `
+  }
 
-    // Create an isolated hidden iframe for printing
-    const iframe = document.createElement('iframe')
-    iframe.style.position = 'fixed'
-    iframe.style.right = '0'
-    iframe.style.bottom = '0'
-    iframe.style.width = '0'
-    iframe.style.height = '0'
-    iframe.style.border = '0'
-    iframe.style.visibility = 'hidden'
-    document.body.appendChild(iframe)
-
-    const iframeDoc = iframe.contentWindow?.document
-    if (!iframeDoc) {
-      document.body.classList.add('printing-receipt')
-      window.print()
-      setTimeout(() => document.body.classList.remove('printing-receipt'), 1000)
-      return
+  const handlePrint = async () => {
+    setIsPrinting(true)
+    try {
+      const html = generatePrintHTML()
+      await executePrintDocument({
+        html,
+        title: `Receipt_${receipt.receiptNumber}`,
+        landscape: false,
+        pageSize: 'A4',
+        fallbackBodyClass: 'printing-receipt',
+      })
+    } finally {
+      setIsPrinting(false)
     }
+  }
 
-    iframeDoc.open()
-    iframeDoc.write(printDocumentHTML)
-    iframeDoc.close()
+  const handlePreviewPDF = async () => {
+    setIsPreviewing(true)
+    try {
+      const html = generatePrintHTML()
+      await executePreviewPDF({
+        html,
+        title: `Receipt_${receipt.receiptNumber}`,
+        landscape: false,
+        pageSize: 'A4',
+      })
+    } finally {
+      setIsPreviewing(false)
+    }
+  }
 
-    iframe.contentWindow?.focus()
-    setTimeout(() => {
-      iframe.contentWindow?.print()
-      setTimeout(() => {
-        try {
-          document.body.removeChild(iframe)
-        } catch {}
-      }, 1500)
-    }, 250)
+  const handleSavePDF = async () => {
+    setIsSaving(true)
+    try {
+      const html = generatePrintHTML()
+      const cleanStudentName = (receipt.studentName || 'Student').replace(/[^a-zA-Z0-9_-]/g, '_')
+      await executeSavePDF({
+        html,
+        defaultFilename: `Receipt_${receipt.receiptNumber}_${cleanStudentName}.pdf`,
+        landscape: false,
+        pageSize: 'A4',
+      })
+    } finally {
+      setIsSaving(false)
+    }
   }
 
   const handleSendWhatsApp = () => {
@@ -664,15 +685,60 @@ export const FeeReceiptModal: React.FC<FeeReceiptModalProps> = ({ receipt, onClo
               </button>
             </div>
 
-            <Button onClick={handlePrint} size="sm" className="gap-1.5 h-8 bg-primary">
+            {/* Open Full PDF Preview */}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handlePreviewPDF}
+              disabled={isPreviewing}
+              className="gap-1.5 h-8 border-slate-300 text-slate-700 hover:text-slate-900 bg-white dark:bg-slate-800 dark:text-slate-200"
+              title="Open full interactive A4 PDF preview in Microsoft Edge / System PDF Reader"
+            >
+              <FileText className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+              <span className="hidden md:inline">{isPreviewing ? 'Opening...' : 'A4 PDF Preview'}</span>
+            </Button>
+
+            <Button
+              type="button"
+              onClick={handlePrint}
+              disabled={isPrinting}
+              size="sm"
+              className="gap-1.5 h-8 bg-primary"
+            >
               <Printer className="w-3.5 h-3.5" />
-              Print A4 Receipt
+              {isPrinting ? 'Printing...' : 'Print A4 Receipt'}
             </Button>
           </div>
         </DialogHeader>
 
         {/* Modal Scrollable Preview & Print Container */}
         <div className="overflow-y-auto p-4 sm:p-6 bg-neutral-100 dark:bg-neutral-900/50 flex-1">
+          {/* A4 Document Status Banner */}
+          <div className="max-w-[210mm] mx-auto mb-3 flex flex-wrap items-center justify-between text-xs text-slate-600 bg-white/95 dark:bg-slate-800/95 px-4 py-2 rounded-lg border border-slate-200 dark:border-slate-700 shadow-xs no-print">
+            <div className="flex items-center gap-2">
+              <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span className="font-bold text-slate-900 dark:text-slate-100">A4 Print Preview Canvas</span>
+              <span className="text-slate-300 dark:text-slate-600">•</span>
+              <span className="font-mono text-[11px] text-slate-500 dark:text-slate-400">210 × 297 mm Portrait</span>
+              <span className="text-slate-300 dark:text-slate-600">•</span>
+              <span className="text-emerald-700 dark:text-emerald-400 font-semibold text-[11px]">
+                {viewMode === 'A4_DUAL' ? 'Dual Slip (Student + Office)' : viewMode === 'STUDENT_ONLY' ? 'Student Slip Only' : 'Office Slip Only'}
+              </span>
+            </div>
+            <div className="flex items-center gap-3 mt-1 sm:mt-0">
+              <button
+                type="button"
+                onClick={handlePreviewPDF}
+                disabled={isPreviewing}
+                className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 dark:text-blue-400 font-medium cursor-pointer underline underline-offset-2"
+              >
+                <Eye className="w-3.5 h-3.5" />
+                Launch Fullscreen PDF
+              </button>
+            </div>
+          </div>
+
           {/* Complete A4 Sheet Container */}
           <div
             id="printable-receipt-container"
@@ -732,7 +798,7 @@ export const FeeReceiptModal: React.FC<FeeReceiptModalProps> = ({ receipt, onClo
           <p className="text-xs text-muted-foreground self-center hidden sm:block">
             Both copies are calibrated to print gracefully on a single A4 sheet without crowding or spilling over.
           </p>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" onClick={onClose}>
               Close
             </Button>
@@ -745,9 +811,37 @@ export const FeeReceiptModal: React.FC<FeeReceiptModalProps> = ({ receipt, onClo
               <WhatsAppIcon className="w-4 h-4" />
               Send on WhatsApp
             </Button>
-            <Button onClick={handlePrint} size="sm" className="gap-1.5 bg-primary">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleSavePDF}
+              disabled={isSaving}
+              className="gap-1.5 text-slate-700 hover:text-slate-900 border-slate-300 dark:text-slate-200"
+            >
+              <Download className="w-3.5 h-3.5 text-slate-600 dark:text-slate-300" />
+              {isSaving ? 'Saving...' : 'Save PDF'}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handlePreviewPDF}
+              disabled={isPreviewing}
+              className="gap-1.5 text-blue-700 hover:text-blue-900 border-blue-200 bg-blue-50/50 hover:bg-blue-100/50 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-800"
+            >
+              <FileText className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+              {isPreviewing ? 'Opening PDF...' : 'Open A4 PDF Preview'}
+            </Button>
+            <Button
+              type="button"
+              onClick={handlePrint}
+              disabled={isPrinting}
+              size="sm"
+              className="gap-1.5 bg-primary"
+            >
               <Printer className="w-3.5 h-3.5" />
-              Print Dual-Copy Slip
+              {isPrinting ? 'Printing...' : 'Print Dual-Copy Slip'}
             </Button>
           </div>
         </DialogFooter>

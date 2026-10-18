@@ -184,5 +184,53 @@
     border-top: 1.5px dashed #444 !important;
     margin: 8px 0 !important;
   }
+
+  /* Official Financial Statement print isolation */
+  body.printing-report {
+    background: white !important;
+    color: black !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  body.printing-report #root,
+  body.printing-report aside,
+  body.printing-report header,
+  body.printing-report nav,
+  body.printing-report .no-print,
+  body.printing-report [data-radix-focus-guard],
+  body.printing-report [role="dialog"] > button,
+  body.printing-report div[data-state="open"][class*="fixed bg-black"] {
+    display: none !important;
+  }
+
+  body.printing-report [role="dialog"] {
+    position: static !important;
+    transform: none !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: white !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  body.printing-report #printable-financial-report {
+    display: block !important;
+    visibility: visible !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: 194mm !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
+    background: white !important;
+    color: black !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
 }
 
