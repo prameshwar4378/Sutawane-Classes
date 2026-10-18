@@ -1,10 +1,23 @@
 Add-Type -AssemblyName System.Drawing
 
-$srcPath = Join-Path $PSScriptRoot "..\data\dev\photos\logo-master-1792115174632.png"
+$srcPath = "C:\Users\user\.gemini\antigravity\brain\09db7e98-f690-45c3-ab8b-c5a03fbb5a17\.user_uploaded\media_1792310247255_f4537f33.jpg"
 $outIco = Join-Path $PSScriptRoot "icon.ico"
 $outPng = Join-Path $PSScriptRoot "icon.png"
+$backendLogo = Join-Path $PSScriptRoot "..\backend\prisma\logo-master.png"
+$devPhotosLogo = Join-Path $PSScriptRoot "..\data\dev\photos\logo-master-1792115174632.png"
+$frontendIcon = Join-Path $PSScriptRoot "..\frontend\public\icon.png"
+$frontendLogo = Join-Path $PSScriptRoot "..\frontend\public\logo-master.png"
+$appDataPhotosLogo = Join-Path $env:APPDATA "SutawaneClasses\data\photos\logo-master-1792115174632.png"
 
 $srcBmp = [System.Drawing.Bitmap]::FromFile($srcPath)
+
+# Save high-res master PNG
+$srcBmp.Save($backendLogo, [System.Drawing.Imaging.ImageFormat]::Png)
+$srcBmp.Save($devPhotosLogo, [System.Drawing.Imaging.ImageFormat]::Png)
+$srcBmp.Save($frontendLogo, [System.Drawing.Imaging.ImageFormat]::Png)
+if (Test-Path (Split-Path $appDataPhotosLogo)) {
+    $srcBmp.Save($appDataPhotosLogo, [System.Drawing.Imaging.ImageFormat]::Png)
+}
 
 $sizes = @(256, 128, 64, 48, 32, 16)
 $pngStreams = @()
@@ -24,6 +37,7 @@ foreach ($sz in $sizes) {
     $targetBmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
     if ($sz -eq 256) {
         $targetBmp.Save($outPng, [System.Drawing.Imaging.ImageFormat]::Png)
+        $targetBmp.Save($frontendIcon, [System.Drawing.Imaging.ImageFormat]::Png)
     }
     $targetBmp.Dispose()
     $pngStreams += $ms

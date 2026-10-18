@@ -47,7 +47,7 @@ settingRouter.get('/', async (_req: Request, res: Response) => {
       address: settingsMap.address || 'Main Head Office, Maharashtra',
       website: settingsMap.website || 'www.sutawaneclasses.com',
       receipt_footer: settingsMap.receipt_footer || 'Fees once paid are non-refundable. Thank you!',
-      logo_url: settingsMap.logo_url || null,
+      logo_url: settingsMap.logo_url || '/api/uploads/photos/logo-master-1792115174632.png',
     })
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch settings', details: String(error) })

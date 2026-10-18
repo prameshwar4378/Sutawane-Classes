@@ -26,8 +26,12 @@ export interface ReceiptData {
   studentCode?: string
   rollNumber?: string
   standard?: string
+  branchId?: string
   branchName?: string
   branchCode?: string
+  branchAddress?: string
+  branchPhone?: string
+  branchLogoUrl?: string | null
   sessionName?: string
   remainingBalance?: number
   parentPhone?: string | null
@@ -57,6 +61,7 @@ interface ReceiptSlipProps {
   email: string
   receiptFooter: string
   logoUrl: string | null
+  branchName?: string
 }
 
 const ReceiptSlip: React.FC<ReceiptSlipProps> = ({
@@ -69,6 +74,7 @@ const ReceiptSlip: React.FC<ReceiptSlipProps> = ({
   email,
   receiptFooter,
   logoUrl,
+  branchName,
 }) => {
   return (
     <div className="border-2 border-[#28375C] rounded-lg p-5 sm:p-6 bg-white text-slate-900 shadow-sm space-y-3.5 select-text">
@@ -79,12 +85,12 @@ const ReceiptSlip: React.FC<ReceiptSlipProps> = ({
         </div>
       )}
 
-      {/* Header: Institute Identity & Receipt Copy Badge */}
+      {/* Header: Institute Identity, Branch Badge & Receipt Copy Badge */}
       <div className="flex items-start justify-between border-b-2 border-[#28375C] pb-3">
         <div className="flex items-center gap-3.5">
           {logoUrl ? (
             <div className="w-14 h-14 rounded-md bg-white border border-slate-200 flex items-center justify-center p-1 flex-shrink-0 shadow-xs">
-              <img src={logoUrl} alt="Logo" className="w-full h-full object-contain" />
+              <img src={logoUrl} alt={branchName ? `${branchName} Logo` : 'Logo'} className="w-full h-full object-contain" />
             </div>
           ) : (
             <div className="w-13 h-13 rounded-md bg-[#28375C] text-white flex items-center justify-center font-bold flex-shrink-0 shadow-xs">
@@ -92,14 +98,21 @@ const ReceiptSlip: React.FC<ReceiptSlipProps> = ({
             </div>
           )}
           <div>
-            <h2 className="text-base sm:text-lg font-black tracking-tight leading-tight uppercase text-[#28375C]">
-              {instituteName}
-            </h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-base sm:text-lg font-black tracking-tight leading-tight uppercase text-[#28375C]">
+                {instituteName}
+              </h2>
+              {branchName && (
+                <span className="inline-flex items-center px-2 py-0.5 rounded text-[10.5px] font-extrabold uppercase bg-blue-50 text-[#28375C] border border-[#28375C]/30 tracking-wider">
+                  📍 {branchName}
+                </span>
+              )}
+            </div>
             <p className="text-xs font-semibold text-slate-600 leading-tight mt-0.5">
-              {tagline}
+              {branchName ? `${branchName} Campus • ` : ''}{tagline}
             </p>
             <p className="text-[11px] text-slate-500 leading-tight mt-1">
-              {address} {phone ? `• Tel: ${phone}` : ''} {email ? `• ${email}` : ''}
+              📍 {address} {phone ? `• Tel: ${phone}` : ''} {email ? `• ${email}` : ''}
             </p>
           </div>
         </div>
@@ -137,10 +150,12 @@ const ReceiptSlip: React.FC<ReceiptSlipProps> = ({
           <span className="font-bold text-slate-900 block text-xs sm:text-sm mt-0.5">{receipt.standard || 'Class 10'}</span>
         </div>
         <div className="col-span-4 sm:col-span-3">
-          <span className="text-[9.5px] text-slate-500 block uppercase font-bold tracking-wider">Branch & Session</span>
-          <span className="font-bold text-slate-900 block text-xs sm:text-sm leading-tight break-words mt-0.5">
-            {receipt.branchName ? `${receipt.branchName} • ` : ''}
-            {receipt.sessionName || '2026–27'}
+          <span className="text-[9.5px] text-slate-500 block uppercase font-bold tracking-wider">Admission Branch</span>
+          <span className="font-extrabold text-[#28375C] block text-xs sm:text-sm leading-tight break-words mt-0.5">
+            {branchName || receipt.branchName || 'Main Campus'}
+          </span>
+          <span className="text-[10px] text-slate-500 block mt-0.5 font-medium">
+            Session: {receipt.sessionName || '2026–27'}
           </span>
         </div>
       </div>
@@ -217,8 +232,8 @@ const ReceiptSlip: React.FC<ReceiptSlipProps> = ({
       <div className="pt-2 flex justify-between items-end text-xs text-slate-600 border-t border-slate-200">
         <div className="flex items-end gap-3.5">
           {/* Physical Stamp Box */}
-          <div className="w-28 h-12 border border-dashed border-slate-400 rounded flex items-center justify-center text-[9px] text-slate-400 font-bold uppercase tracking-wider bg-slate-50 flex-shrink-0">
-            [ Official Stamp ]
+          <div className="w-32 h-12 border border-dashed border-slate-400 rounded flex items-center justify-center text-[8.5px] text-slate-500 font-bold uppercase tracking-wider bg-slate-50 flex-shrink-0 px-1 text-center">
+            {branchName ? `[ Stamp - ${branchName} ]` : '[ Official Stamp ]'}
           </div>
           <div>
             <p className="font-semibold text-slate-700 text-[10.5px]">{receiptFooter}</p>
@@ -248,6 +263,7 @@ function buildReceiptSlipHTML(params: {
   email: string
   receiptFooter: string
   logoUrl: string | null
+  branchName?: string
 }): string {
   const {
     copyType,
@@ -259,6 +275,7 @@ function buildReceiptSlipHTML(params: {
     email,
     receiptFooter,
     logoUrl,
+    branchName,
   } = params
 
   const dateFormatted = formatDateLong(receipt.paymentDate)
@@ -304,7 +321,7 @@ function buildReceiptSlipHTML(params: {
             : ''
         }
 
-        <!-- Header: Institute Info & Receipt Number -->
+        <!-- Header: Institute Info, Branch Badge & Receipt Number -->
         <div style="display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #28375C; padding-bottom: 6px; margin-bottom: 8px;">
           <div style="display: flex; align-items: center; gap: 12px;">
             ${
@@ -321,14 +338,25 @@ function buildReceiptSlipHTML(params: {
             `
             }
             <div>
-              <h2 style="margin: 0; font-size: 17px; font-weight: 900; letter-spacing: 0.01em; text-transform: uppercase; color: #28375C; line-height: 1.2;">
-                ${instituteName}
-              </h2>
+              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <h2 style="margin: 0; font-size: 16px; font-weight: 900; letter-spacing: 0.01em; text-transform: uppercase; color: #28375C; line-height: 1.2;">
+                  ${instituteName}
+                </h2>
+                ${
+                  branchName
+                    ? `
+                  <span style="display: inline-block; padding: 1px 6px; font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; background: #eff6ff; color: #28375C; border: 1px solid #93c5fd; border-radius: 3px;">
+                    📍 ${branchName}
+                  </span>
+                `
+                    : ''
+                }
+              </div>
               <p style="margin: 2px 0 0; font-size: 10px; font-weight: 600; color: #475569; line-height: 1.2;">
-                ${tagline}
+                ${branchName ? `${branchName} Campus • ` : ''}${tagline}
               </p>
               <p style="margin: 2px 0 0; font-size: 9px; color: #64748b; line-height: 1.2;">
-                ${address} ${phone ? `• Tel: ${phone}` : ''} ${email ? `• ${email}` : ''}
+                📍 ${address} ${phone ? `• Tel: ${phone}` : ''} ${email ? `• ${email}` : ''}
               </p>
             </div>
           </div>
@@ -364,9 +392,12 @@ function buildReceiptSlipHTML(params: {
             <span style="font-weight: 700; color: #1e293b; display: block; font-size: 11px;">${receipt.standard || 'Class 10'}</span>
           </div>
           <div>
-            <span style="font-size: 8.5px; color: #64748b; display: block; text-transform: uppercase; font-weight: 700; letter-spacing: 0.04em;">Branch & Session</span>
-            <span style="font-weight: 700; color: #1e293b; display: block; font-size: 10.5px; line-height: 1.25;">
-              ${receipt.branchName ? `${receipt.branchName} • ` : ''}${receipt.sessionName || '2026–27'}
+            <span style="font-size: 8.5px; color: #64748b; display: block; text-transform: uppercase; font-weight: 700; letter-spacing: 0.04em;">Admission Branch</span>
+            <strong style="color: #1e293b; display: block; font-size: 11px; line-height: 1.25;">
+              ${branchName || receipt.branchName || 'Main Campus'}
+            </strong>
+            <span style="font-size: 8.5px; color: #64748b; display: block;">
+              Session: ${receipt.sessionName || '2026–27'}
             </span>
           </div>
         </div>
@@ -431,8 +462,8 @@ function buildReceiptSlipHTML(params: {
       <div style="display: flex; justify-content: space-between; align-items: flex-end; border-top: 1px solid #cbd5e1; padding-top: 6px;">
         <div style="display: flex; align-items: flex-end; gap: 12px;">
           <!-- Physical Stamp Box Placeholder -->
-          <div style="width: 105px; height: 42px; border: 1px dashed #94a3b8; border-radius: 4px; display: flex; align-items: center; justify-content: center; background: #fafafa; color: #94a3b8; font-size: 8.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; text-align: center; flex-shrink: 0;">
-            [ Official Stamp ]
+          <div style="width: 115px; height: 42px; border: 1px dashed #94a3b8; border-radius: 4px; display: flex; align-items: center; justify-content: center; background: #fafafa; color: #94a3b8; font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; text-align: center; padding: 2px; flex-shrink: 0;">
+            ${branchName ? `[ Stamp - ${branchName} ]` : '[ Official Stamp ]'}
           </div>
           <div>
             <p style="margin: 0; font-weight: 600; color: #475569; font-size: 9px; line-height: 1.3;">${receiptFooter}</p>
@@ -460,15 +491,27 @@ export const FeeReceiptModal: React.FC<FeeReceiptModalProps> = ({ receipt, onClo
   if (!receipt) return null
 
   // Resolve branch details if receipt belongs to a specific branch
-  const receiptBranch = branches.find((b) => b.name === receipt.branchName || b.code === receipt.branchCode)
+  const receiptBranch = branches.find(
+    (b) =>
+      (receipt.branchId && b.id === receipt.branchId) ||
+      (receipt.branchName && b.name.toLowerCase() === receipt.branchName.toLowerCase()) ||
+      (receipt.branchCode && b.code.toLowerCase() === receipt.branchCode.toLowerCase())
+  )
+
+  const branchName = receipt.branchName || receiptBranch?.name || ''
+  const branchAddress = receipt.branchAddress || receiptBranch?.address || ''
+  const branchPhone = receipt.branchPhone || receiptBranch?.phone || ''
+  const branchLogoUrl = receipt.branchLogoUrl || receiptBranch?.logoUrl || null
 
   const instituteName = (settings?.institute_name || 'Sutawane Classes').toUpperCase()
   const tagline = settings?.tagline || 'Excellence in Coaching & Board Exam Preparations'
-  const address = receiptBranch?.address || settings?.address || 'Main Campus, Maharashtra'
-  const phone = receiptBranch?.phone || settings?.phone || '+91 98765 43210'
+  const address = branchAddress || settings?.address || 'Main Campus, Maharashtra'
+  const phone = branchPhone || settings?.phone || '+91 98765 43210'
   const email = settings?.email || 'contact@sutawaneclasses.com'
   const receiptFooter = settings?.receipt_footer || 'Fees once paid are non-refundable. Retain this slip for future verification.'
-  const logoUrl = receiptBranch?.logoUrl || activeLogoUrl || settings?.logo_url || null
+  // Master logo vs Branch logo fallback:
+  // If branch has custom logo, use it! Otherwise fallback to master logo activeLogoUrl -> settings.logo_url -> /icon.png
+  const logoUrl = branchLogoUrl || activeLogoUrl || settings?.logo_url || '/icon.png'
 
   const generatePrintHTML = () => {
     const studentSlipHTML = buildReceiptSlipHTML({
@@ -481,6 +524,7 @@ export const FeeReceiptModal: React.FC<FeeReceiptModalProps> = ({ receipt, onClo
       email,
       receiptFooter,
       logoUrl,
+      branchName,
     })
 
     const officeSlipHTML = buildReceiptSlipHTML({
@@ -493,6 +537,7 @@ export const FeeReceiptModal: React.FC<FeeReceiptModalProps> = ({ receipt, onClo
       email,
       receiptFooter,
       logoUrl,
+      branchName,
     })
 
     const cutLineHTML = `
@@ -758,6 +803,7 @@ export const FeeReceiptModal: React.FC<FeeReceiptModalProps> = ({ receipt, onClo
                   email={email}
                   receiptFooter={receiptFooter}
                   logoUrl={logoUrl}
+                  branchName={branchName}
                 />
               </div>
             )}
@@ -787,6 +833,7 @@ export const FeeReceiptModal: React.FC<FeeReceiptModalProps> = ({ receipt, onClo
                   email={email}
                   receiptFooter={receiptFooter}
                   logoUrl={logoUrl}
+                  branchName={branchName}
                 />
               </div>
             )}

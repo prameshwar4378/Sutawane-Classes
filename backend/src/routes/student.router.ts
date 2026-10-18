@@ -476,7 +476,12 @@ studentRouter.get('/:id', async (req: Request, res: Response) => {
         reversalReason: p.reversalReason,
         reversedAt: p.reversedAt ? p.reversedAt.toISOString() : null,
         sessionName: p.session?.name,
+        branchId: p.branch?.id || p.branchId,
         branchName: p.branch?.name,
+        branchCode: p.branch?.code,
+        branchAddress: p.branch?.address,
+        branchPhone: p.branch?.phone,
+        branchLogoUrl: p.branch?.logoUrl,
         standard: p.admission?.standard,
         allocations: p.allocations.map((a) => ({
           id: a.id,

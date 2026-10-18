@@ -139,7 +139,12 @@ reportRouter.get('/statement', async (req: Request, res: Response) => {
         parentPhone: p.student?.parentPhone || '—',
         rollNumber: p.admission?.rollNumber || '—',
         standard: p.admission?.standard || '—',
+        branchId: p.branch?.id || p.branchId,
         branchName: p.branch?.name || '—',
+        branchCode: p.branch?.code || '—',
+        branchAddress: p.branch?.address,
+        branchPhone: p.branch?.phone,
+        branchLogoUrl: p.branch?.logoUrl,
         sessionName: p.session?.displayName || p.session?.name || '—',
       })),
       expenses: expenses.map((e) => ({

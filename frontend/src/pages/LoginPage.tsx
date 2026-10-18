@@ -149,8 +149,15 @@ export const LoginPage: React.FC = () => {
       <div className="w-full max-w-md space-y-4">
         {/* Brand Header */}
         <div className="text-center space-y-1.5">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-primary text-primary-foreground shadow-lg shadow-primary/25 mb-1">
-            <GraduationCap className="w-8 h-8" />
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-white border border-slate-200/80 shadow-md p-1.5 mb-1 overflow-hidden">
+            <img
+              src="/icon.png"
+              alt="Logo"
+              className="w-full h-full object-contain"
+              onError={(e) => {
+                ;(e.currentTarget as HTMLElement).style.display = 'none'
+              }}
+            />
           </div>
           <h1 className="text-2xl font-black tracking-tight text-foreground">
             SUTAWANE CLASSES

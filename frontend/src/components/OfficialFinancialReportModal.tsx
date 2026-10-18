@@ -114,7 +114,7 @@ export const OfficialFinancialReportModal: React.FC<OfficialFinancialReportModal
   const phone = currentBranch?.phone || settings?.phone || '+91 7776824564'
   const helpline = '7776824564 (Mr. Rameshwar Pawar)'
   const email = settings?.email || 'contact@sutawaneclasses.com'
-  const logoUrl = activeLogoUrl || settings?.logo_url || null
+  const logoUrl = activeLogoUrl || settings?.logo_url || '/icon.png'
 
   const reportTitle =
     activeMode === 'DAILY'

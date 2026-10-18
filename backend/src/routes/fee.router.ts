@@ -433,15 +433,29 @@ feeRouter.post('/payments', async (req: Request, res: Response) => {
         return newPayment
       })
 
+      const branchInfo = await prisma.branch.findUnique({ where: { id: branchId } })
+      const sessionInfo = await prisma.academicSession.findUnique({ where: { id: targetSessionId } })
+
       return res.status(201).json({
         success: true,
-        payment,
+        payment: {
+          ...payment,
+          branch: branchInfo,
+          session: sessionInfo,
+        },
         studentName: student.fullName,
         studentCode: student.studentCode,
         parentPhone: student.parentPhone,
         studentPhone: student.studentPhone,
         remainingBalance: dueRemaining - numAmount,
         isPreviousDuePayment: true,
+        branchId: branchInfo?.id,
+        branchName: branchInfo?.name,
+        branchCode: branchInfo?.code,
+        branchAddress: branchInfo?.address,
+        branchPhone: branchInfo?.phone,
+        branchLogoUrl: branchInfo?.logoUrl,
+        sessionName: sessionInfo?.name,
       })
     }
 
@@ -607,9 +621,16 @@ feeRouter.post('/payments', async (req: Request, res: Response) => {
       return newPayment
     })
 
+    const branchInfo = targetAdmission.branch || (await prisma.branch.findUnique({ where: { id: branchId } }))
+    const sessionInfo = targetAdmission.session || (await prisma.academicSession.findUnique({ where: { id: targetSessionId } }))
+
     res.status(201).json({
       success: true,
-      payment,
+      payment: {
+        ...payment,
+        branch: branchInfo,
+        session: sessionInfo,
+      },
       studentName: student.fullName,
       studentCode: student.studentCode,
       parentPhone: student.parentPhone,
@@ -617,6 +638,13 @@ feeRouter.post('/payments', async (req: Request, res: Response) => {
       rollNumber: targetAdmission.rollNumber,
       standard: targetAdmission.standard,
       remainingBalance: pendingDue - numAmount,
+      branchId: branchInfo?.id,
+      branchName: branchInfo?.name,
+      branchCode: branchInfo?.code,
+      branchAddress: branchInfo?.address,
+      branchPhone: branchInfo?.phone,
+      branchLogoUrl: branchInfo?.logoUrl,
+      sessionName: sessionInfo?.name,
     })
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'Failed to record payment' })

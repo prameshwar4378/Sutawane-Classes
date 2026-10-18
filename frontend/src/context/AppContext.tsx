@@ -238,7 +238,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (selectedBranchId !== 'ALL' && currentBranch?.logoUrl) {
       return currentBranch.logoUrl
     }
-    return settings?.logo_url || null
+    return settings?.logo_url || '/icon.png'
   }, [selectedBranchId, currentBranch, settings])
 
   const requestBranchChange = (id: string | 'ALL'): boolean => {
