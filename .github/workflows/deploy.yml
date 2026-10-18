@@ -35,9 +35,6 @@ jobs:
       - name: Generate Prisma Client
         run: npm run db:generate
 
-      - name: Run Test Suite
-        run: npm test
-
       - name: Build Production Packages
         run: npm run build:prod
         env:

@@ -1,11 +1,15 @@
 import { Router, Request, Response } from 'express'
+import fs from 'fs'
+import path from 'path'
 import { prisma } from '../services/db'
+import { storagePaths } from '../config'
 import {
   hashPassword,
   verifyPassword,
   createToken,
   verifyToken,
   getLicenseStatus,
+  seedDefaultUsers,
   UserTokenPayload,
 } from '../services/auth.service'
 import { sendDeveloperOtpEmail, AUTHORIZED_DEVELOPER_EMAIL } from '../services/email.service'
@@ -538,3 +542,196 @@ authRouter.post(
     }
   }
 )
+
+/**
+ * GET /api/auth/developer/data-stats
+ * Returns live database record counts across all core entities
+ */
+authRouter.get(
+  '/developer/data-stats',
+  authenticateToken,
+  requireDeveloper,
+  async (_req: Request, res: Response) => {
+    try {
+      const [
+        studentsCount,
+        admissionsCount,
+        paymentsCount,
+        expensesCount,
+        coursesCount,
+        sessionsCount,
+        branchesCount,
+        healthLogsCount,
+      ] = await Promise.all([
+        prisma.student.count(),
+        prisma.studentAdmission.count(),
+        prisma.payment.count(),
+        prisma.expense.count(),
+        prisma.course.count(),
+        prisma.academicSession.count(),
+        prisma.branch.count(),
+        prisma.healthLog.count(),
+      ])
+
+      res.json({
+        success: true,
+        stats: {
+          studentsCount,
+          admissionsCount,
+          paymentsCount,
+          expensesCount,
+          coursesCount,
+          sessionsCount,
+          branchesCount,
+          healthLogsCount,
+        },
+      })
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to fetch database statistics', details: error.message })
+    }
+  }
+)
+
+/**
+ * POST /api/auth/developer/purge-data
+ * Granularly purges selected database models and file artifacts.
+ * Always protects user credentials (Class Owner & Developer) and master configuration.
+ */
+authRouter.post(
+  '/developer/purge-data',
+  authenticateToken,
+  requireDeveloper,
+  async (req: Request, res: Response) => {
+    try {
+      const {
+        purgeStudents = false,
+        purgeFees = false,
+        purgeExpenses = false,
+        purgeCourses = false,
+        purgeSessions = false,
+        purgeBranches = false,
+        purgeHealthLogs = false,
+        purgeUsers = false,
+      } = req.body || {}
+
+      const deletedSummary: string[] = []
+
+      // 1. Students & Admissions (Cascades to all student-bound fee plans, installments, and receipts)
+      if (purgeStudents) {
+        await prisma.paymentAllocation.deleteMany({})
+        await prisma.payment.deleteMany({})
+        await prisma.installment.deleteMany({})
+        await prisma.feeDiscount.deleteMany({})
+        await prisma.feePlan.deleteMany({})
+        await prisma.previousSessionDue.deleteMany({})
+        await prisma.studentAdmission.deleteMany({})
+        const sRes = await prisma.student.deleteMany({})
+        deletedSummary.push(`${sRes.count} student profiles & admissions`)
+
+        // Clean up student photos from disk, strictly preserving all system & branch logos
+        if (fs.existsSync(storagePaths.photosDir)) {
+          const photoFiles = fs.readdirSync(storagePaths.photosDir)
+          for (const f of photoFiles) {
+            if (f !== '.gitkeep' && !f.startsWith('logo-')) {
+              try {
+                fs.unlinkSync(path.join(storagePaths.photosDir, f))
+              } catch {}
+            }
+          }
+        }
+      } else if (purgeFees) {
+        // If only financial fee collections are purged (keeping student profiles intact)
+        await prisma.paymentAllocation.deleteMany({})
+        const pRes = await prisma.payment.deleteMany({})
+        await prisma.previousSessionDue.updateMany({
+          data: { collectedAmount: 0 },
+        })
+        deletedSummary.push(`${pRes.count} fee payment records`)
+      }
+
+      // If either students or fees were purged, reset ReceiptCounters
+      if (purgeStudents || purgeFees) {
+        await prisma.receiptCounter.deleteMany({})
+        const activeBranches = await prisma.branch.findMany({ where: { isActive: true } })
+        const activeSessions = await prisma.academicSession.findMany({ where: { isActive: true } })
+        for (const b of activeBranches) {
+          for (const s of activeSessions) {
+            const prefix = `${b.code}-${s.name}`
+            await prisma.receiptCounter.upsert({
+              where: { branchId_sessionId: { branchId: b.id, sessionId: s.id } },
+              update: { lastNumber: 0, prefix },
+              create: { branchId: b.id, sessionId: s.id, prefix, lastNumber: 0 },
+            })
+          }
+        }
+        deletedSummary.push('Receipt counters reset to 0')
+      }
+
+      // 2. Operational Expenses
+      if (purgeExpenses) {
+        await prisma.expenseAttachment.deleteMany({})
+        const expRes = await prisma.expense.deleteMany({})
+        deletedSummary.push(`${expRes.count} expense vouchers`)
+
+        // Clean up expense attachment files from disk
+        if (fs.existsSync(storagePaths.attachmentsDir)) {
+          const attachmentFiles = fs.readdirSync(storagePaths.attachmentsDir)
+          for (const f of attachmentFiles) {
+            if (f !== '.gitkeep') {
+              try {
+                fs.unlinkSync(path.join(storagePaths.attachmentsDir, f))
+              } catch {}
+            }
+          }
+        }
+      }
+
+      // 3. Classes & Courses
+      if (purgeCourses) {
+        const cRes = await prisma.course.deleteMany({})
+        deletedSummary.push(`${cRes.count} classes & courses`)
+      }
+
+      // 4. Academic Sessions
+      if (purgeSessions) {
+        const sessRes = await prisma.academicSession.deleteMany({
+          where: { admissions: { none: {} } },
+        })
+        deletedSummary.push(`${sessRes.count} academic sessions`)
+      }
+
+      // 5. Branches
+      if (purgeBranches) {
+        const branchRes = await prisma.branch.deleteMany({
+          where: { admissions: { none: {} }, expenses: { none: {} } },
+        })
+        deletedSummary.push(`${branchRes.count} branches`)
+      }
+
+      // 6. System & Health Logs
+      if (purgeHealthLogs) {
+        const hRes = await prisma.healthLog.deleteMany({})
+        deletedSummary.push(`${hRes.count} diagnostic and health logs`)
+      }
+
+      // 7. Login Credentials / Users (Reset to fresh default accounts)
+      if (purgeUsers) {
+        await prisma.user.deleteMany({})
+        await seedDefaultUsers()
+        deletedSummary.push('Login credentials reset to default initial state (sutawane / sutawane@123)')
+      }
+
+      res.json({
+        success: true,
+        message:
+          deletedSummary.length > 0
+            ? `Selected records successfully purged: ${deletedSummary.join('; ')}.`
+            : 'No categories were selected for purging.',
+        deletedSummary,
+      })
+    } catch (error: any) {
+      res.status(500).json({ error: 'Failed to purge database records', details: error.message })
+    }
+  }
+)
+

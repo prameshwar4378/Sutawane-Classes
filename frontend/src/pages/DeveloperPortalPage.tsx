@@ -38,6 +38,15 @@ import {
   Eye,
   EyeOff,
   Sparkles,
+  Trash2,
+  Database,
+  GraduationCap,
+  Receipt,
+  BookOpen,
+  CalendarDays,
+  Building2,
+  Activity,
+  Check,
 } from 'lucide-react'
 
 interface UserRecord {
@@ -67,6 +76,43 @@ export const DeveloperPortalPage: React.FC = () => {
   // License editing state
   const [expiryInput, setExpiryInput] = useState('')
   const [developerNoteInput, setDeveloperNoteInput] = useState('')
+
+  // State for Database Purge Console (Developer Only)
+  const [isPurgeModalOpen, setIsPurgeModalOpen] = useState(false)
+  const [confirmPurgeText, setConfirmPurgeText] = useState('')
+  const [purgeOptions, setPurgeOptions] = useState({
+    purgeStudents: true,
+    purgeFees: true,
+    purgeExpenses: true,
+    purgeCourses: false,
+    purgeSessions: false,
+    purgeBranches: false,
+    purgeHealthLogs: true,
+  })
+
+  // Fetch Database Live Statistics for Purge Modal
+  const { data: statsData, refetch: refetchStats } = useQuery({
+    queryKey: ['developer-data-stats'],
+    queryFn: () => api.get('/auth/developer/data-stats'),
+    enabled: isPurgeModalOpen,
+  })
+
+  const stats = statsData?.stats || {}
+
+  // Mutation: Purge Selected Data
+  const purgeMutation = useMutation({
+    mutationFn: (options: typeof purgeOptions) => api.post('/auth/developer/purge-data', options),
+    onSuccess: (res: any) => {
+      queryClient.invalidateQueries()
+      refetchStats()
+      setIsPurgeModalOpen(false)
+      setConfirmPurgeText('')
+      notify('success', res.message || 'Selected records purged successfully.')
+    },
+    onError: (err: any) => {
+      notify('error', err.message || 'Failed to purge database records.')
+    },
+  })
 
   const notify = (type: 'success' | 'error', message: string) => {
     setNotification({ type, message })
@@ -502,6 +548,63 @@ export const DeveloperPortalPage: React.FC = () => {
         </CardContent>
       </Card>
 
+      {/* Danger Zone: Selective Database Wipe & Factory Reset (Developer Confidential) */}
+      <Card className="border border-rose-500/50 bg-rose-50/20 dark:bg-rose-950/10 shadow-sm">
+        <CardHeader className="py-4 border-b border-rose-200/60 dark:border-rose-900/40 bg-rose-50/50 dark:bg-rose-950/20">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <Badge variant="outline" className="bg-rose-100 text-rose-800 border-rose-300 font-extrabold text-[10px] tracking-wider uppercase">
+                  Confidential • Developer Only
+                </Badge>
+              </div>
+              <CardTitle className="text-base font-bold text-rose-700 dark:text-rose-400 flex items-center gap-2 mt-1">
+                <Trash2 className="w-4 h-4 text-rose-600" />
+                Danger Zone: Database Records Purge &amp; Selective Factory Clean
+              </CardTitle>
+              <CardDescription className="text-xs text-rose-900/80 dark:text-rose-300/80 mt-0.5">
+                Permanently purge specific database models (Students, Fees, Expenses, Classes, Sessions, Logs) or perform a full factory clean.
+              </CardDescription>
+            </div>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => {
+                refetchStats()
+                setConfirmPurgeText('')
+                setIsPurgeModalOpen(true)
+              }}
+              className="gap-1.5 text-xs font-bold shrink-0 bg-rose-600 hover:bg-rose-700 text-white shadow-xs h-9 px-4"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Configure &amp; Delete Records...
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="pt-4 space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            <div className="p-3 rounded-lg border border-emerald-200 bg-emerald-50/50 dark:bg-emerald-950/20 space-y-1">
+              <span className="font-bold text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                Always Preserved (Guaranteed):
+              </span>
+              <p className="text-[11px] text-emerald-700 dark:text-emerald-400 leading-relaxed">
+                User Accounts (Class Owner &amp; Developer), Login Passwords, Institute Master Logo, Primary Branch &amp; Core System Configuration are always safe.
+              </p>
+            </div>
+            <div className="p-3 rounded-lg border border-rose-200 bg-rose-50/50 dark:bg-rose-950/20 space-y-1">
+              <span className="font-bold text-rose-800 dark:text-rose-300 flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                Selective Record Deletion:
+              </span>
+              <p className="text-[11px] text-rose-700 dark:text-rose-400 leading-relaxed">
+                Choose exactly what to delete—Students, Financial Transactions, Expenses, Courses, Sessions, Logs, or check all for a complete factory clean.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Modal: Change Password */}
       <Dialog
         open={!!passwordModalUser}
@@ -573,6 +676,382 @@ export const DeveloperPortalPage: React.FC = () => {
               <KeyRound className="w-3.5 h-3.5" />
               {updatePasswordMutation.isPending ? 'Updating...' : 'Set New Password'}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal: Selective Database Purge & Factory Clean Console */}
+      <Dialog open={isPurgeModalOpen} onOpenChange={setIsPurgeModalOpen}>
+        <DialogContent className="sm:max-w-[640px] max-h-[92vh] flex flex-col p-0 border-rose-500/40">
+          <DialogHeader className="p-4 sm:p-5 border-b bg-rose-50/40 dark:bg-rose-950/20 flex-shrink-0">
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="bg-rose-100 text-rose-800 border-rose-300 text-[10px] font-extrabold uppercase">
+                Confidential Action
+              </Badge>
+            </div>
+            <DialogTitle className="text-base font-bold text-rose-700 dark:text-rose-400 flex items-center gap-2 mt-1">
+              <Trash2 className="w-5 h-5 text-rose-600" />
+              Selective Database Purge &amp; Factory Clean Console
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground mt-0.5">
+              Mark which models and record categories to permanently delete. Unchecked categories will remain completely untouched.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="overflow-y-auto p-4 sm:p-5 space-y-4 flex-1">
+            {/* Preset quick selection pills */}
+            <div className="flex flex-wrap items-center gap-1.5 p-2 bg-muted/40 rounded-lg border text-xs">
+              <span className="text-[11px] font-bold text-muted-foreground mr-1">Quick Select:</span>
+              <button
+                type="button"
+                onClick={() =>
+                  setPurgeOptions({
+                    purgeStudents: true,
+                    purgeFees: true,
+                    purgeExpenses: true,
+                    purgeCourses: true,
+                    purgeSessions: true,
+                    purgeBranches: true,
+                    purgeHealthLogs: true,
+                  })
+                }
+                className="px-2.5 py-1 rounded bg-rose-100 text-rose-800 hover:bg-rose-200 text-[11px] font-bold cursor-pointer transition-colors"
+              >
+                Select All (Factory Clean)
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setPurgeOptions({
+                    purgeStudents: true,
+                    purgeFees: true,
+                    purgeExpenses: true,
+                    purgeCourses: false,
+                    purgeSessions: false,
+                    purgeBranches: false,
+                    purgeHealthLogs: true,
+                  })
+                }
+                className="px-2.5 py-1 rounded bg-background border hover:bg-muted text-[11px] font-medium cursor-pointer transition-colors"
+              >
+                Students &amp; Financials
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setPurgeOptions({
+                    purgeStudents: false,
+                    purgeFees: true,
+                    purgeExpenses: true,
+                    purgeCourses: false,
+                    purgeSessions: false,
+                    purgeBranches: false,
+                    purgeHealthLogs: false,
+                  })
+                }
+                className="px-2.5 py-1 rounded bg-background border hover:bg-muted text-[11px] font-medium cursor-pointer transition-colors"
+              >
+                Financials Only (Fees + Expenses)
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setPurgeOptions({
+                    purgeStudents: false,
+                    purgeFees: false,
+                    purgeExpenses: false,
+                    purgeCourses: false,
+                    purgeSessions: false,
+                    purgeBranches: false,
+                    purgeHealthLogs: false,
+                  })
+                }
+                className="px-2.5 py-1 rounded bg-background border hover:bg-muted text-[11px] font-medium cursor-pointer transition-colors"
+              >
+                Clear All
+              </button>
+            </div>
+
+            {/* Checklist of Models & Record Types */}
+            <div className="space-y-2">
+              {/* Option 1: Students & Admissions */}
+              <label
+                className={`flex items-start gap-3 p-3 rounded-lg border transition-all cursor-pointer ${
+                  purgeOptions.purgeStudents
+                    ? 'border-rose-300 bg-rose-50/50 dark:bg-rose-950/20'
+                    : 'border-border bg-card hover:bg-muted/30'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={purgeOptions.purgeStudents}
+                  onChange={(e) =>
+                    setPurgeOptions((prev) => ({ ...prev, purgeStudents: e.target.checked }))
+                  }
+                  className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500 mt-0.5 cursor-pointer"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold text-xs text-foreground flex items-center gap-1.5">
+                      <GraduationCap className="w-3.5 h-3.5 text-primary" />
+                      Student Profiles, Admissions &amp; Roll Numbers
+                    </span>
+                    <Badge variant="outline" className="text-[10px] py-0 px-1.5 font-mono">
+                      {stats.studentsCount ?? 0} Students • {stats.admissionsCount ?? 0} Admissions
+                    </Badge>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
+                    Deletes all student profiles, admission enrollments, roll numbers, student photo files, and previous session dues.
+                  </p>
+                </div>
+              </label>
+
+              {/* Option 2: Fee Collections & Receipts */}
+              <label
+                className={`flex items-start gap-3 p-3 rounded-lg border transition-all cursor-pointer ${
+                  purgeOptions.purgeFees
+                    ? 'border-rose-300 bg-rose-50/50 dark:bg-rose-950/20'
+                    : 'border-border bg-card hover:bg-muted/30'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={purgeOptions.purgeFees}
+                  onChange={(e) =>
+                    setPurgeOptions((prev) => ({ ...prev, purgeFees: e.target.checked }))
+                  }
+                  className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500 mt-0.5 cursor-pointer"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold text-xs text-foreground flex items-center gap-1.5">
+                      <Receipt className="w-3.5 h-3.5 text-emerald-600" />
+                      Fee Collections, Payment Receipts &amp; Installments
+                    </span>
+                    <Badge variant="outline" className="text-[10px] py-0 px-1.5 font-mono">
+                      {stats.paymentsCount ?? 0} Receipts / Payments
+                    </Badge>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
+                    Deletes payment transactions, installment allocations, approved discounts, and resets receipt serial counters to zero.
+                  </p>
+                </div>
+              </label>
+
+              {/* Option 3: Operational Expenses */}
+              <label
+                className={`flex items-start gap-3 p-3 rounded-lg border transition-all cursor-pointer ${
+                  purgeOptions.purgeExpenses
+                    ? 'border-rose-300 bg-rose-50/50 dark:bg-rose-950/20'
+                    : 'border-border bg-card hover:bg-muted/30'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={purgeOptions.purgeExpenses}
+                  onChange={(e) =>
+                    setPurgeOptions((prev) => ({ ...prev, purgeExpenses: e.target.checked }))
+                  }
+                  className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500 mt-0.5 cursor-pointer"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold text-xs text-foreground flex items-center gap-1.5">
+                      <Receipt className="w-3.5 h-3.5 text-amber-600" />
+                      Operational Expenses &amp; Bill Attachments
+                    </span>
+                    <Badge variant="outline" className="text-[10px] py-0 px-1.5 font-mono">
+                      {stats.expensesCount ?? 0} Expense Vouchers
+                    </Badge>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
+                    Deletes all institute expense vouchers, vendor bills, and uploaded attachment documents.
+                  </p>
+                </div>
+              </label>
+
+              {/* Option 4: Classes & Courses */}
+              <label
+                className={`flex items-start gap-3 p-3 rounded-lg border transition-all cursor-pointer ${
+                  purgeOptions.purgeCourses
+                    ? 'border-rose-300 bg-rose-50/50 dark:bg-rose-950/20'
+                    : 'border-border bg-card hover:bg-muted/30'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={purgeOptions.purgeCourses}
+                  onChange={(e) =>
+                    setPurgeOptions((prev) => ({ ...prev, purgeCourses: e.target.checked }))
+                  }
+                  className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500 mt-0.5 cursor-pointer"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold text-xs text-foreground flex items-center gap-1.5">
+                      <BookOpen className="w-3.5 h-3.5 text-blue-600" />
+                      Classes &amp; Courses Curriculum
+                    </span>
+                    <Badge variant="outline" className="text-[10px] py-0 px-1.5 font-mono">
+                      {stats.coursesCount ?? 0} Courses
+                    </Badge>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
+                    Deletes defined courses/standards (e.g., Class 10, Class 12 Science, Foundation).
+                  </p>
+                </div>
+              </label>
+
+              {/* Option 5: Inactive Academic Sessions */}
+              <label
+                className={`flex items-start gap-3 p-3 rounded-lg border transition-all cursor-pointer ${
+                  purgeOptions.purgeSessions
+                    ? 'border-rose-300 bg-rose-50/50 dark:bg-rose-950/20'
+                    : 'border-border bg-card hover:bg-muted/30'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={purgeOptions.purgeSessions}
+                  onChange={(e) =>
+                    setPurgeOptions((prev) => ({ ...prev, purgeSessions: e.target.checked }))
+                  }
+                  className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500 mt-0.5 cursor-pointer"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold text-xs text-foreground flex items-center gap-1.5">
+                      <CalendarDays className="w-3.5 h-3.5 text-purple-600" />
+                      Inactive / Archived Academic Sessions
+                    </span>
+                    <Badge variant="outline" className="text-[10px] py-0 px-1.5 font-mono">
+                      {stats.sessionsCount ?? 0} Sessions Total
+                    </Badge>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
+                    Purges archived or inactive academic sessions that have no active student admissions. Active session is preserved.
+                  </p>
+                </div>
+              </label>
+
+              {/* Option 6: Empty / Inactive Branches */}
+              <label
+                className={`flex items-start gap-3 p-3 rounded-lg border transition-all cursor-pointer ${
+                  purgeOptions.purgeBranches
+                    ? 'border-rose-300 bg-rose-50/50 dark:bg-rose-950/20'
+                    : 'border-border bg-card hover:bg-muted/30'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={purgeOptions.purgeBranches}
+                  onChange={(e) =>
+                    setPurgeOptions((prev) => ({ ...prev, purgeBranches: e.target.checked }))
+                  }
+                  className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500 mt-0.5 cursor-pointer"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold text-xs text-foreground flex items-center gap-1.5">
+                      <Building2 className="w-3.5 h-3.5 text-indigo-600" />
+                      Empty / Inactive Branches
+                    </span>
+                    <Badge variant="outline" className="text-[10px] py-0 px-1.5 font-mono">
+                      {stats.branchesCount ?? 0} Branches Total
+                    </Badge>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
+                    Purges branch records that contain no active student admissions or expenses. Primary active branch is preserved.
+                  </p>
+                </div>
+              </label>
+
+              {/* Option 7: Health & Audit Logs */}
+              <label
+                className={`flex items-start gap-3 p-3 rounded-lg border transition-all cursor-pointer ${
+                  purgeOptions.purgeHealthLogs
+                    ? 'border-rose-300 bg-rose-50/50 dark:bg-rose-950/20'
+                    : 'border-border bg-card hover:bg-muted/30'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={purgeOptions.purgeHealthLogs}
+                  onChange={(e) =>
+                    setPurgeOptions((prev) => ({ ...prev, purgeHealthLogs: e.target.checked }))
+                  }
+                  className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500 mt-0.5 cursor-pointer"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold text-xs text-foreground flex items-center gap-1.5">
+                      <Activity className="w-3.5 h-3.5 text-teal-600" />
+                      System Health &amp; Diagnostic Logs
+                    </span>
+                    <Badge variant="outline" className="text-[10px] py-0 px-1.5 font-mono">
+                      {stats.healthLogsCount ?? 0} Logs
+                    </Badge>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">
+                    Clears server health checks, connection diagnostic history, and temporary upload caches.
+                  </p>
+                </div>
+              </label>
+            </div>
+
+            {/* Preserved Safety Notice */}
+            <div className="p-3 rounded-lg border border-emerald-200 bg-emerald-50/50 dark:bg-emerald-950/20 text-xs flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span className="text-[11px] text-emerald-800 dark:text-emerald-300 font-medium">
+                <strong>Guaranteed Security:</strong> Class Owner &amp; Developer login credentials, passwords, and institute settings are NEVER deleted.
+              </span>
+            </div>
+
+            {/* Confirmation Input */}
+            <div className="p-3 bg-rose-50/60 dark:bg-rose-950/30 border border-rose-200 rounded-lg space-y-1.5 text-xs">
+              <label className="font-bold text-rose-800 dark:text-rose-300 block">
+                Type <span className="font-mono underline">DELETE</span> to confirm record purge:
+              </label>
+              <Input
+                type="text"
+                value={confirmPurgeText}
+                onChange={(e) => setConfirmPurgeText(e.target.value)}
+                placeholder="Type DELETE to confirm"
+                className="text-xs font-mono tracking-widest text-center uppercase bg-white dark:bg-slate-900 border-rose-300 font-bold"
+              />
+            </div>
+          </div>
+
+          <DialogFooter className="p-4 border-t bg-muted/30 flex sm:justify-between items-center gap-2 flex-shrink-0">
+            <span className="text-xs text-muted-foreground hidden sm:inline">
+              {Object.values(purgeOptions).filter(Boolean).length} of 7 categories marked
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsPurgeModalOpen(false)}
+                disabled={purgeMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                disabled={
+                  confirmPurgeText.trim().toUpperCase() !== 'DELETE' ||
+                  Object.values(purgeOptions).filter(Boolean).length === 0 ||
+                  purgeMutation.isPending
+                }
+                onClick={() => purgeMutation.mutate(purgeOptions)}
+                className="gap-1.5 font-bold bg-rose-600 hover:bg-rose-700 text-white"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                {purgeMutation.isPending
+                  ? 'Purging Records...'
+                  : `Confirm & Purge (${Object.values(purgeOptions).filter(Boolean).length} Categories)`}
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
