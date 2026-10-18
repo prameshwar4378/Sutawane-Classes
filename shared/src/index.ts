@@ -51,3 +51,17 @@ export interface FinancialStats {
   totalPendingFees: number;
   activeStudentsCount: number;
 }
+
+export interface Course {
+  id: string;
+  name: string;
+  code?: string | null;
+  description?: string | null;
+  defaultFee?: number | null;
+  isActive: boolean;
+  sortOrder: number;
+  enrolledCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+

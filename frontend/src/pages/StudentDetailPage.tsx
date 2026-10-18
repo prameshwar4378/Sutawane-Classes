@@ -43,20 +43,35 @@ import {
   IndianRupee,
   Sparkles,
   History,
+  Trash2,
+  AlertTriangle,
 } from 'lucide-react'
 import { formatCurrency, formatDate, formatDateLong } from '@/lib/utils'
 import { PromoteStudentModal } from '@/components/PromoteStudentModal'
+import { FeeReceiptModal, type ReceiptData } from '@/components/FeeReceiptModal'
+import { useApp } from '@/context/AppContext'
+import {
+  WhatsAppIcon,
+  openWhatsApp,
+  buildReceiptWhatsAppMessage,
+  buildAdmissionWhatsAppMessage,
+  buildFeeReminderWhatsAppMessage,
+} from '@/lib/whatsapp'
 
 export const StudentDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>()
+  const { courses, settings } = useApp()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Dialog states
+  const [selectedAdmissionId, setSelectedAdmissionId] = useState<string>('')
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
   const [isArchiveDialogOpen, setIsArchiveDialogOpen] = useState(false)
   const [isPromoteDialogOpen, setIsPromoteDialogOpen] = useState(false)
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [deleteConfirmText, setDeleteConfirmText] = useState('')
   const [selectedReceipt, setSelectedReceipt] = useState<any>(null)
   const [toastMsg, setToastMsg] = useState('')
 
@@ -69,10 +84,10 @@ export const StudentDetailPage: React.FC = () => {
   const [address, setAddress] = useState('')
   const [editError, setEditError] = useState('')
 
-  // Fetch student detailed profile
+  // Fetch student detailed profile (scoped by selected admission session if set)
   const { data: student, isLoading, isError, refetch } = useQuery({
-    queryKey: ['student-profile', id],
-    queryFn: () => api.get(`/students/${id}`),
+    queryKey: ['student-profile', id, selectedAdmissionId],
+    queryFn: () => api.get(`/students/${id}`, { admissionId: selectedAdmissionId || undefined }),
     enabled: Boolean(id),
   })
 
@@ -115,6 +130,25 @@ export const StudentDetailPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['students'] })
       setIsArchiveDialogOpen(false)
       showToast(variables ? 'Student reactivated successfully!' : 'Student archived safely without data loss!')
+    },
+  })
+
+  // Permanent student deletion mutation
+  const deleteMutation = useMutation({
+    mutationFn: () => api.delete(`/students/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['students'] })
+      queryClient.invalidateQueries({ queryKey: ['reports'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      navigate('/students', {
+        state: {
+          toast: `Student "${student?.fullName || 'Record'}" and all associated fee records were permanently deleted.`
+        }
+      })
+    },
+    onError: (err: any) => {
+      showToast(err.message || 'Failed to delete student', true)
+      setIsDeleteDialogOpen(false)
     },
   })
 
@@ -230,12 +264,42 @@ export const StudentDetailPage: React.FC = () => {
             Promote to Next Session
           </Button>
           <Button
-            onClick={() => navigate('/fees/collect')}
+            onClick={() => {
+              const pendingAmt = fee?.overallPendingAmount ?? fee?.totalPending ?? admission?.pendingFees ?? ''
+              navigate(
+                `/fees/collect?studentId=${student.id}&admissionId=${admission?.id || ''}&amount=${pendingAmt}`
+              )
+            }}
             className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"
+            title={`Collect fees for ${student.fullName}`}
           >
             <CreditCard className="w-4 h-4" />
             Collect Fees
           </Button>
+          {student.parentPhone && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                const msg = buildAdmissionWhatsAppMessage({
+                  instituteName: settings?.institute_name,
+                  studentName: student.fullName,
+                  rollNumber: admission?.rollNumber || student.studentCode,
+                  standard: admission?.standard || '',
+                  sessionName: admission?.session?.displayName || admission?.session?.name,
+                  branchName: admission?.branch?.name,
+                  totalFees: admission?.feePlan?.totalFees || 0,
+                  helpline: settings?.phone,
+                })
+                openWhatsApp(student.parentPhone, msg)
+              }}
+              className="gap-2 text-emerald-600 border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700"
+              title="Send admission details to registered parent via WhatsApp"
+            >
+              <WhatsAppIcon className="w-4 h-4" />
+              <span>WhatsApp Admission</span>
+            </Button>
+          )}
           <Button onClick={openEditDialog} variant="outline" className="gap-2">
             <Edit2 className="w-4 h-4" />
             Edit Profile
@@ -247,6 +311,18 @@ export const StudentDetailPage: React.FC = () => {
           >
             <Archive className="w-4 h-4" />
             {isArchived ? 'Reactivate' : 'Archive'}
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={() => {
+              setDeleteConfirmText('')
+              setIsDeleteDialogOpen(true)
+            }}
+            className="gap-2 bg-rose-600 hover:bg-rose-700 text-white"
+            title="Permanently delete student and all linked fee/admission records"
+          >
+            <Trash2 className="w-4 h-4" />
+            Delete Student
           </Button>
         </div>
       </div>
@@ -313,6 +389,19 @@ export const StudentDetailPage: React.FC = () => {
                 <Phone className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
                 <span className="text-muted-foreground">Parent Phone:</span>
                 <span className="font-mono font-medium ml-auto">{student.parentPhone}</span>
+                {student.parentPhone && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const msg = `Hello from ${settings?.institute_name || 'Sutawane Classes'} regarding ${student.fullName}.`
+                      openWhatsApp(student.parentPhone, msg)
+                    }}
+                    className="p-1 rounded text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700"
+                    title="Open WhatsApp chat with parent"
+                  >
+                    <WhatsAppIcon className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
               {student.studentPhone && (
                 <div className="flex items-center gap-2">
@@ -339,118 +428,154 @@ export const StudentDetailPage: React.FC = () => {
 
         {/* Right Area: Fee Ledger Cards & Breakdown */}
         <div className="lg:col-span-2 space-y-6">
+          {/* Multi-Session Admission Switcher Tabs */}
+          {student.allAdmissions && student.allAdmissions.length > 1 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-muted/40 rounded-lg border">
+              <div className="flex items-center gap-1.5 text-xs font-semibold">
+                <Calendar className="w-4 h-4 text-primary" />
+                <span>Inspect Session Admission:</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {student.allAdmissions.map((adm: any) => {
+                  const isSelected = (selectedAdmissionId || student.currentAdmission?.id) === adm.id
+                  return (
+                    <Button
+                      key={adm.id}
+                      size="sm"
+                      variant={isSelected ? 'default' : 'outline'}
+                      onClick={() => setSelectedAdmissionId(adm.id)}
+                      className="text-xs h-7 gap-1"
+                    >
+                      <span>{adm.sessionName} ({adm.standard})</span>
+                      {adm.pendingFees > 0 ? (
+                        <Badge variant="danger" className="text-[9px] py-0 px-1">
+                          Due: {formatCurrency(adm.pendingFees)}
+                        </Badge>
+                      ) : (
+                        <Badge variant="success" className="text-[9px] py-0 px-1">
+                          Settled
+                        </Badge>
+                      )}
+                    </Button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Fee KPI Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <Card className="border-blue-200 bg-blue-50/30 dark:bg-blue-950/20">
-              <CardHeader className="py-3 pb-1">
-                <CardTitle className="text-xs font-semibold uppercase text-muted-foreground">
-                  Agreed Total Fees
+              <CardHeader className="py-2.5 pb-1 px-3">
+                <CardTitle className="text-[10px] font-semibold uppercase text-muted-foreground">
+                  Session Agreed Fee
                 </CardTitle>
               </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-foreground">
+              <CardContent className="px-3 pb-2.5">
+                <div className="text-xl font-bold text-foreground">
                   {formatCurrency(fee.netPayable)}
                 </div>
                 {fee.totalDiscount > 0 && (
-                  <p className="text-[11px] text-muted-foreground mt-0.5">
-                    (Gross: {formatCurrency(fee.totalFees)} - Concession: {formatCurrency(fee.totalDiscount)})
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    (Disc: {formatCurrency(fee.totalDiscount)})
                   </p>
                 )}
               </CardContent>
             </Card>
 
             <Card className="border-emerald-200 bg-emerald-50/30 dark:bg-emerald-950/20">
-              <CardHeader className="py-3 pb-1">
-                <CardTitle className="text-xs font-semibold uppercase text-muted-foreground">
-                  Total Fees Paid
+              <CardHeader className="py-2.5 pb-1 px-3">
+                <CardTitle className="text-[10px] font-semibold uppercase text-muted-foreground">
+                  Session Fees Paid
                 </CardTitle>
               </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-emerald-600">
+              <CardContent className="px-3 pb-2.5">
+                <div className="text-xl font-bold text-emerald-600">
                   {formatCurrency(fee.totalPaid)}
                 </div>
-                <p className="text-[11px] text-muted-foreground mt-0.5">
-                  Confirmed collections
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  This session only
                 </p>
               </CardContent>
             </Card>
 
             <Card className="border-rose-200 bg-rose-50/30 dark:bg-rose-950/20">
-              <CardHeader className="py-3 pb-1">
-                <CardTitle className="text-xs font-semibold uppercase text-muted-foreground">
-                  Outstanding Balance
+              <CardHeader className="py-2.5 pb-1 px-3">
+                <CardTitle className="text-[10px] font-semibold uppercase text-muted-foreground">
+                  Session Remaining
                 </CardTitle>
               </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-rose-600">
+              <CardContent className="px-3 pb-2.5">
+                <div className="text-xl font-bold text-rose-600">
                   {formatCurrency(fee.totalPending)}
                 </div>
-                <p className="text-[11px] text-muted-foreground mt-0.5">
-                  Remaining installment dues
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  Current session due
                 </p>
+              </CardContent>
+            </Card>
+
+            <Card className="border-amber-300 bg-amber-50/50 dark:bg-amber-950/30">
+              <CardHeader className="py-2.5 pb-1 px-3">
+                <CardTitle className="text-[10px] font-bold uppercase text-amber-800 dark:text-amber-300">
+                  Overall Outstanding
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="px-3 pb-2.5">
+                <div className="text-xl font-extrabold text-amber-800 dark:text-amber-200">
+                  {formatCurrency(fee.overallPendingAmount ?? fee.totalPending)}
+                </div>
+                {fee.previousDuesPending > 0 && (
+                  <p className="text-[10px] text-rose-600 font-medium mt-0.5">
+                    (Incl. {formatCurrency(fee.previousDuesPending)} prior)
+                  </p>
+                )}
               </CardContent>
             </Card>
           </div>
 
-          {/* Installment Breakdown Schedule */}
+          {/* Fee Payment Progress & Flexible Summary */}
           <Card>
-            <CardHeader className="py-4">
-              <CardTitle className="text-base font-semibold flex items-center justify-between">
-                <span>Installment Schedule</span>
-                <Badge variant={fee.totalPending === 0 ? 'success' : 'warning'}>
-                  {fee.totalPending === 0 ? 'All Installments Cleared' : `${fee.totalPending > 0 ? 'Installments Pending' : ''}`}
-                </Badge>
-              </CardTitle>
+            <CardHeader className="py-3 px-4 bg-muted/20 border-b flex flex-row items-center justify-between">
+              <div>
+                <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                  <CreditCard className="w-4 h-4 text-primary" />
+                  Fee Settlement Progress
+                </CardTitle>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Flexible payments active — pay any amount at any time without fixed installment restrictions.
+                </p>
+              </div>
+              <Badge variant={fee.totalPending === 0 ? 'success' : 'warning'}>
+                {fee.totalPending === 0 ? 'Fully Paid & Settled' : `${formatCurrency(fee.totalPending)} Remaining`}
+              </Badge>
             </CardHeader>
-            <CardContent>
-              {student.installments.length === 0 ? (
-                <p className="text-xs text-muted-foreground py-4 text-center">No installment plan configured.</p>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>#</TableHead>
-                      <TableHead>Installment Label</TableHead>
-                      <TableHead>Due Date</TableHead>
-                      <TableHead>Amount Due</TableHead>
-                      <TableHead>Amount Paid</TableHead>
-                      <TableHead>Remaining</TableHead>
-                      <TableHead className="text-right">Status</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {student.installments.map((inst: any) => (
-                      <TableRow key={inst.id}>
-                        <TableCell className="font-mono text-xs">{inst.installmentNo}</TableCell>
-                        <TableCell className="font-medium text-foreground">{inst.label}</TableCell>
-                        <TableCell className="text-xs">{formatDateLong(inst.dueDate)}</TableCell>
-                        <TableCell className="font-semibold">{formatCurrency(inst.amountDue)}</TableCell>
-                        <TableCell className="text-emerald-600 font-medium">
-                          {formatCurrency(inst.amountPaid)}
-                        </TableCell>
-                        <TableCell className="text-rose-600 font-medium">
-                          {formatCurrency(inst.balanceRemaining)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Badge
-                            variant={
-                              inst.status === 'PAID'
-                                ? 'success'
-                                : inst.status === 'PARTIAL'
-                                ? 'warning'
-                                : inst.status === 'OVERDUE'
-                                ? 'danger'
-                                : 'outline'
-                            }
-                          >
-                            {inst.status}
-                          </Badge>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
+            <CardContent className="pt-4 space-y-3">
+              <div className="flex items-center justify-between text-xs font-semibold">
+                <span>
+                  Progress:{' '}
+                  {Math.min(
+                    100,
+                    fee.netPayable > 0 ? Math.round((fee.totalPaid / fee.netPayable) * 100) : 0
+                  )}
+                  % Paid
+                </span>
+                <span className="text-muted-foreground font-mono">
+                  {formatCurrency(fee.totalPaid)} / {formatCurrency(fee.netPayable)}
+                </span>
+              </div>
+              {/* Progress Bar */}
+              <div className="w-full bg-muted rounded-full h-2.5 overflow-hidden">
+                <div
+                  className="bg-emerald-600 h-2.5 rounded-full transition-all duration-300"
+                  style={{
+                    width: `${Math.min(
+                      100,
+                      fee.netPayable > 0 ? Math.round((fee.totalPaid / fee.netPayable) * 100) : 0
+                    )}%`,
+                  }}
+                />
+              </div>
             </CardContent>
           </Card>
 
@@ -463,21 +588,33 @@ export const StudentDetailPage: React.FC = () => {
               {student.payments.length === 0 ? (
                 <div className="py-8 text-center border rounded-lg border-dashed">
                   <CreditCard className="w-8 h-8 text-muted-foreground mx-auto mb-2 opacity-50" />
-                  <p className="text-xs font-semibold">No payments recorded yet</p>
                   <p className="text-[11px] text-muted-foreground mt-0.5">
-                    Click "Collect Fees" above to record the initial installment token.
+                    Click "Collect Fees" to record a fee payment for {student.fullName}.
                   </p>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      const pendingAmt = fee?.overallPendingAmount ?? fee?.totalPending ?? admission?.pendingFees ?? ''
+                      navigate(
+                        `/fees/collect?studentId=${student.id}&admissionId=${admission?.id || ''}&amount=${pendingAmt}`
+                      )
+                    }}
+                    className="mt-3 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+                  >
+                    <CreditCard className="w-3.5 h-3.5" />
+                    Collect Fees Now
+                  </Button>
                 </div>
               ) : (
                 <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Receipt No.</TableHead>
-                      <TableHead>Date</TableHead>
-                      <TableHead>Payment Mode</TableHead>
-                      <TableHead>Notes</TableHead>
-                      <TableHead>Amount</TableHead>
-                      <TableHead className="text-right">Action</TableHead>
+                  <TableHeader className="bg-[#28375C] text-white">
+                    <TableRow className="border-b border-[#1b2640] hover:bg-[#28375C] bg-[#28375C]">
+                      <TableHead className="text-white font-semibold">Receipt No.</TableHead>
+                      <TableHead className="text-white font-semibold">Date</TableHead>
+                      <TableHead className="text-white font-semibold">Payment Mode</TableHead>
+                      <TableHead className="text-white font-semibold">Notes</TableHead>
+                      <TableHead className="text-white font-semibold">Amount</TableHead>
+                      <TableHead className="text-right text-white font-semibold pr-4">Action</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -506,6 +643,34 @@ export const StudentDetailPage: React.FC = () => {
                             <Printer className="w-3.5 h-3.5" />
                             Receipt
                           </Button>
+                          {student.parentPhone && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                const msg = buildReceiptWhatsAppMessage({
+                                  instituteName: settings?.institute_name,
+                                  studentName: student.fullName,
+                                  rollNumber: admission?.rollNumber,
+                                  standard: admission?.standard,
+                                  receiptNumber: p.receiptNumber,
+                                  totalAmount: p.totalAmount,
+                                  paymentDate: p.paymentDate,
+                                  paymentMode: p.paymentMode,
+                                  referenceNumber: p.referenceNumber,
+                                  remainingBalance: admission?.balanceRemaining,
+                                  branchName: admission?.branch?.name,
+                                  helpline: settings?.phone,
+                                })
+                                openWhatsApp(student.parentPhone, msg)
+                              }}
+                              className="h-8 gap-1 text-xs text-emerald-600 border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700 ml-1"
+                              title="Send receipt to registered parent via WhatsApp"
+                            >
+                              <WhatsAppIcon className="w-3.5 h-3.5" />
+                              <span className="hidden sm:inline">WhatsApp</span>
+                            </Button>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -526,14 +691,14 @@ export const StudentDetailPage: React.FC = () => {
               </CardHeader>
               <CardContent>
                 <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Original Session</TableHead>
-                      <TableHead>Description / Reference</TableHead>
-                      <TableHead>Carried Amount</TableHead>
-                      <TableHead>Recovered</TableHead>
-                      <TableHead>Balance Due</TableHead>
-                      <TableHead className="text-right">Status</TableHead>
+                  <TableHeader className="bg-[#28375C] text-white">
+                    <TableRow className="border-b border-[#1b2640] hover:bg-[#28375C] bg-[#28375C]">
+                      <TableHead className="text-white font-semibold">Original Session</TableHead>
+                      <TableHead className="text-white font-semibold">Description / Reference</TableHead>
+                      <TableHead className="text-white font-semibold">Carried Amount</TableHead>
+                      <TableHead className="text-white font-semibold">Recovered</TableHead>
+                      <TableHead className="text-white font-semibold">Balance Due</TableHead>
+                      <TableHead className="text-right text-white font-semibold pr-4">Status</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -554,10 +719,26 @@ export const StudentDetailPage: React.FC = () => {
                         <TableCell className="text-rose-600 font-bold">
                           {formatCurrency(due.balanceRemaining)}
                         </TableCell>
-                        <TableCell className="text-right">
+                        <TableCell className="text-right space-x-1.5 whitespace-nowrap">
                           <Badge variant={due.balanceRemaining === 0 ? 'success' : 'danger'}>
                             {due.balanceRemaining === 0 ? 'Settled' : 'Pending Recovery'}
                           </Badge>
+                          {due.balanceRemaining > 0 && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() =>
+                                navigate(
+                                  `/fees/collect?studentId=${student.id}&previousDueId=${due.id}&amount=${due.balanceRemaining}`
+                                )
+                              }
+                              className="h-6 px-1.5 text-[10px] text-emerald-700 border-emerald-500/40 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 gap-1 font-medium"
+                              title="Collect this carried due"
+                            >
+                              <CreditCard className="w-3 h-3 text-emerald-600" />
+                              Collect
+                            </Button>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -578,14 +759,14 @@ export const StudentDetailPage: React.FC = () => {
               </CardHeader>
               <CardContent>
                 <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Academic Session</TableHead>
-                      <TableHead>Class / Standard</TableHead>
-                      <TableHead>Branch</TableHead>
-                      <TableHead>Roll Number</TableHead>
-                      <TableHead>Enrolled Date</TableHead>
-                      <TableHead className="text-right">Status</TableHead>
+                  <TableHeader className="bg-[#28375C] text-white">
+                    <TableRow className="border-b border-[#1b2640] hover:bg-[#28375C] bg-[#28375C]">
+                      <TableHead className="text-white font-semibold">Academic Session</TableHead>
+                      <TableHead className="text-white font-semibold">Class / Standard</TableHead>
+                      <TableHead className="text-white font-semibold">Branch</TableHead>
+                      <TableHead className="text-white font-semibold">Roll Number</TableHead>
+                      <TableHead className="text-white font-semibold">Enrolled Date</TableHead>
+                      <TableHead className="text-right text-white font-semibold pr-4">Status</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -647,10 +828,20 @@ export const StudentDetailPage: React.FC = () => {
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold">Class / Course</label>
-                  <Input
+                  <select
                     value={standard}
                     onChange={(e) => setStandard(e.target.value)}
-                  />
+                    className="w-full h-9 rounded-md border border-input bg-background px-3 text-xs focus:outline-none"
+                  >
+                    {standard && !courses.some((c) => c.name.toLowerCase() === standard.toLowerCase()) && (
+                      <option value={standard}>{standard} (Current)</option>
+                    )}
+                    {courses.map((c) => (
+                      <option key={c.id} value={c.name}>
+                        {c.name} {c.code ? `(${c.code})` : ''} {!c.isActive ? '(Archived)' : ''}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
@@ -705,7 +896,7 @@ export const StudentDetailPage: React.FC = () => {
             <AlertDialogDescription>
               {isArchived
                 ? `This will restore ${student.fullName} as an active student in this academic session.`
-                : `Archiving will remove ${student.fullName} from active student lists. All historical installment ledgers, payment transactions, and receipts will be safely preserved in the database permanently.`}
+                : `Archiving will remove ${student.fullName} from active student lists. All historical financial ledgers, payment transactions, and receipts will be safely preserved in the database permanently.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -720,68 +911,108 @@ export const StudentDetailPage: React.FC = () => {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Printable Receipt Modal Dialog */}
-      <Dialog open={Boolean(selectedReceipt)} onOpenChange={() => setSelectedReceipt(null)}>
-        <DialogContent className="max-w-md">
-          {selectedReceipt && (
-            <div className="space-y-4">
-              <DialogHeader>
-                <DialogTitle className="flex items-center justify-between">
-                  <span>Fee Payment Receipt</span>
-                  <Button size="sm" variant="outline" onClick={() => window.print()} className="gap-1.5">
-                    <Printer className="w-3.5 h-3.5" />
-                    Print
-                  </Button>
-                </DialogTitle>
-              </DialogHeader>
-
-              <div className="border p-4 rounded-lg bg-card text-xs space-y-3 font-mono print:border-none">
-                <div className="text-center border-b pb-2">
-                  <h3 className="font-bold text-sm text-foreground">SUTAWANE CLASSES</h3>
-                  <p className="text-[10px] text-muted-foreground">Official Fee Receipt</p>
-                </div>
-                <div className="flex justify-between">
-                  <span>Receipt #:</span>
-                  <span className="font-bold">{selectedReceipt.receiptNumber}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Student:</span>
-                  <span className="font-semibold">{student.fullName}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Roll No:</span>
-                  <span>{admission?.rollNumber || '—'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Class:</span>
-                  <span>{admission?.standard || '—'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Payment Date:</span>
-                  <span>{formatDate(selectedReceipt.paymentDate)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Payment Mode:</span>
-                  <span>{selectedReceipt.paymentMode}</span>
-                </div>
-                <div className="border-t pt-2 flex justify-between font-bold text-sm text-emerald-600">
-                  <span>Amount Paid:</span>
-                  <span>{formatCurrency(selectedReceipt.totalAmount)}</span>
-                </div>
-                <div className="border-t pt-2 text-[10px] text-muted-foreground text-center">
-                  Thank you! Computer generated official receipt.
+      {/* Strict Permanent Deletion Confirmation Dialog */}
+      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <AlertDialogContent className="max-w-md border-rose-500/30">
+          <AlertDialogHeader>
+            <div className="flex items-center gap-3 text-rose-600 dark:text-rose-400">
+              <div className="w-10 h-10 rounded-full bg-rose-100 dark:bg-rose-950/60 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-rose-600 dark:text-rose-400" />
+              </div>
+              <div>
+                <AlertDialogTitle className="text-base font-bold text-rose-700 dark:text-rose-400">
+                  Strict Warning: Permanent Student Deletion
+                </AlertDialogTitle>
+                <p className="text-xs text-muted-foreground font-normal">
+                  This action is completely destructive and CANNOT be undone.
+                </p>
+              </div>
+            </div>
+            <div className="space-y-3 pt-3 text-xs text-foreground">
+              <div className="p-3 bg-rose-50/80 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 rounded-lg space-y-1.5 text-rose-950 dark:text-rose-200 text-left">
+                <p className="font-semibold text-xs flex items-center gap-1.5 text-rose-700 dark:text-rose-300">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  All of the following records will be permanently erased:
+                </p>
+                <div className="pl-4 text-[11px] space-y-1">
+                  <p>• Student Profile: <strong>{student.fullName}</strong> (ID: {student.studentCode}, Roll: {admission?.rollNumber || '—'})</p>
+                  <p>• All Academic Admissions & Session Progression records</p>
+                  <p>• All Fee Commitments, Plans & Installment schedules</p>
+                  <p>• All Fee Payment Transactions, Allocations & Official Receipts</p>
+                  <p>• All Prior Dues & Outstanding Ledgers</p>
                 </div>
               </div>
 
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setSelectedReceipt(null)}>
-                  Close
-                </Button>
-              </DialogFooter>
+              <p className="text-xs text-muted-foreground text-left">
+                If you only wish to hide this student from active lists while preserving financial receipts for accounting audits, click <strong>Cancel</strong> and choose <strong>Archive</strong> instead.
+              </p>
+
+              <div className="space-y-1.5 pt-1 text-left">
+                <label className="text-[11px] font-semibold text-foreground block">
+                  To confirm permanent deletion, type <span className="font-mono font-bold text-rose-600 select-all">DELETE</span> below:
+                </label>
+                <Input
+                  value={deleteConfirmText}
+                  onChange={(e) => setDeleteConfirmText(e.target.value)}
+                  placeholder="Type DELETE here"
+                  className="h-9 text-xs border-rose-300 focus-visible:ring-rose-500 font-mono tracking-wider"
+                  autoFocus
+                />
+              </div>
             </div>
-          )}
-        </DialogContent>
-      </Dialog>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2 sm:gap-0 pt-2">
+            <AlertDialogCancel
+              onClick={() => {
+                setIsDeleteDialogOpen(false)
+                setDeleteConfirmText('')
+              }}
+              disabled={deleteMutation.isPending}
+              className="text-xs"
+            >
+              Cancel & Keep Student
+            </AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={deleteConfirmText.trim().toUpperCase() !== 'DELETE' || deleteMutation.isPending}
+              onClick={() => deleteMutation.mutate()}
+              className="gap-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              {deleteMutation.isPending ? 'Deleting Student & Records...' : 'Permanently Delete Everything'}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Official A4 Dual-Copy Printable Receipt Modal */}
+      <FeeReceiptModal
+        receipt={
+          selectedReceipt && student
+            ? {
+                receiptNumber: selectedReceipt.receiptNumber,
+                paymentDate: selectedReceipt.paymentDate,
+                totalAmount: selectedReceipt.totalAmount,
+                paymentMode: selectedReceipt.paymentMode,
+                referenceNumber: selectedReceipt.referenceNumber,
+                notes: selectedReceipt.notes,
+                isReversed: selectedReceipt.isReversed,
+                reversalReason: selectedReceipt.reversalReason,
+                studentName: student.fullName,
+                studentCode: student.studentCode,
+                rollNumber: admission?.rollNumber,
+                standard: admission?.standard,
+                branchName: admission?.branch?.name,
+                branchCode: admission?.branch?.code,
+                sessionName: admission?.session?.name,
+                remainingBalance: admission?.balanceRemaining,
+                allocations: selectedReceipt.allocations,
+              }
+            : null
+        }
+        onClose={() => setSelectedReceipt(null)}
+      />
 
       {/* Promote Student Modal */}
       {student && (

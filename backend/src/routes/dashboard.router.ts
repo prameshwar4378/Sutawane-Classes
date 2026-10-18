@@ -5,18 +5,39 @@ export const dashboardRouter = Router()
 
 dashboardRouter.get('/', async (req: Request, res: Response) => {
   try {
-    const { branchId, sessionId } = req.query
+    const { branchId, sessionId, standard } = req.query
 
-    // Resolve session
-    let targetSessionId = sessionId ? String(sessionId) : null
-    if (!targetSessionId) {
-      const current = await prisma.academicSession.findFirst({ where: { isCurrent: true } })
-      targetSessionId = current?.id || null
+    // Resolve session filter
+    const isAllSessions = sessionId === 'ALL'
+    let targetSessionId: string | null = null
+    if (!isAllSessions) {
+      if (sessionId) {
+        targetSessionId = String(sessionId)
+      } else {
+        const current = await prisma.academicSession.findFirst({ where: { isCurrent: true } })
+        targetSessionId = current?.id || null
+      }
     }
 
     // Branch filter condition
     const isAllBranches = !branchId || branchId === 'ALL'
     const branchFilter = isAllBranches ? {} : { branchId: String(branchId) }
+
+    // Session filter for payments/admissions
+    const sessionFilter = targetSessionId ? { sessionId: targetSessionId } : {}
+
+    // Standard filter
+    const isAllStandards = !standard || standard === 'ALL'
+    const standardAdmissionFilter = isAllStandards ? {} : { standard: String(standard) }
+    const standardPaymentFilter = isAllStandards ? {} : { admission: { standard: String(standard) } }
+
+    // Combined payment filter
+    const paymentBaseFilter = {
+      ...branchFilter,
+      ...sessionFilter,
+      ...standardPaymentFilter,
+      isReversed: false,
+    }
 
     // Date boundaries
     const now = new Date()
@@ -29,8 +50,7 @@ dashboardRouter.get('/', async (req: Request, res: Response) => {
     // 1. Today's Collections & Expenses
     const todayPayments = await prisma.payment.findMany({
       where: {
-        ...branchFilter,
-        isReversed: false,
+        ...paymentBaseFilter,
         paymentDate: { gte: startOfToday, lte: endOfToday },
       },
     })
@@ -48,8 +68,7 @@ dashboardRouter.get('/', async (req: Request, res: Response) => {
     // 2. Month's Collections & Expenses
     const monthPayments = await prisma.payment.findMany({
       where: {
-        ...branchFilter,
-        isReversed: false,
+        ...paymentBaseFilter,
         paymentDate: { gte: startOfMonth, lte: endOfMonth },
       },
     })
@@ -65,19 +84,20 @@ dashboardRouter.get('/', async (req: Request, res: Response) => {
     const monthNetMovement = monthCollections - monthExpenses
 
     // 3. Session Active Admissions & Total Expected Fees
-    const admissionWhere: any = { isActive: true }
-    if (!isAllBranches) admissionWhere.branchId = String(branchId)
-    if (targetSessionId) admissionWhere.sessionId = targetSessionId
+    const admissionWhere: any = {
+      isActive: true,
+      ...branchFilter,
+      ...sessionFilter,
+      ...standardAdmissionFilter,
+    }
 
     const admissions = await prisma.studentAdmission.findMany({
       where: admissionWhere,
       include: {
-        student: {
-          include: {
-            payments: { where: { isReversed: false } },
-          },
-        },
         feePlan: true,
+        payments: {
+          where: { isReversed: false },
+        },
       },
     })
 
@@ -85,9 +105,9 @@ dashboardRouter.get('/', async (req: Request, res: Response) => {
     let totalCollectedFees = 0
 
     for (const adm of admissions) {
-      const planFees = adm.feePlan?.netPayable || adm.feePlan?.totalFees || 0
+      const planFees = adm.feePlan?.netPayable ?? adm.feePlan?.totalFees ?? 0
       totalExpectedFees += planFees
-      const paid = adm.student.payments.reduce((acc, p) => acc + p.totalAmount, 0)
+      const paid = (adm.payments || []).reduce((acc, p) => acc + p.totalAmount, 0)
       totalCollectedFees += paid
     }
     const totalPendingFees = Math.max(0, totalExpectedFees - totalCollectedFees)
@@ -142,8 +162,7 @@ dashboardRouter.get('/', async (req: Request, res: Response) => {
 
       const mPay = await prisma.payment.findMany({
         where: {
-          ...branchFilter,
-          isReversed: false,
+          ...paymentBaseFilter,
           paymentDate: { gte: mStart, lte: mEnd },
         },
       })
@@ -169,23 +188,54 @@ dashboardRouter.get('/', async (req: Request, res: Response) => {
     const branches = await prisma.branch.findMany({ where: { isActive: true } })
     const branchComparison = []
 
+    // Fetch active session object if targetSessionId exists for date boundaries
+    const targetSession = targetSessionId
+      ? await prisma.academicSession.findUnique({ where: { id: targetSessionId } })
+      : null
+
     for (const b of branches) {
       const bAdmissions = await prisma.studentAdmission.findMany({
-        where: { branchId: b.id, sessionId: targetSessionId || undefined, isActive: true },
+        where: {
+          branchId: b.id,
+          ...sessionFilter,
+          ...standardAdmissionFilter,
+          isActive: true,
+        },
         include: {
           feePlan: true,
-          student: { include: { payments: { where: { isReversed: false } } } },
+          payments: { where: { isReversed: false } },
         },
       })
 
       let bExpected = 0
-      let bCollected = 0
+      let bActiveCollected = 0
       for (const adm of bAdmissions) {
-        bExpected += adm.feePlan?.netPayable || adm.feePlan?.totalFees || 0
-        bCollected += adm.student.payments.reduce((s, p) => s + p.totalAmount, 0)
+        bExpected += adm.feePlan?.netPayable ?? adm.feePlan?.totalFees ?? 0
+        bActiveCollected += (adm.payments || []).reduce((s, p) => s + p.totalAmount, 0)
       }
 
-      const bExpenses = await prisma.expense.findMany({ where: { branchId: b.id } })
+      // Query confirmed payments directly for this branch and session (including any payments from students enrolled in this session)
+      const bPayments = await prisma.payment.findMany({
+        where: {
+          branchId: b.id,
+          ...sessionFilter,
+          ...standardPaymentFilter,
+          isReversed: false,
+        },
+      })
+      const bTotalCollections = bPayments.reduce((s, p) => s + p.totalAmount, 0)
+
+      // Query branch expenses scoped to the active session's date range (or all if consolidated)
+      const expenseDateFilter = targetSession
+        ? { expenseDate: { gte: targetSession.startDate, lte: targetSession.endDate } }
+        : {}
+
+      const bExpenses = await prisma.expense.findMany({
+        where: {
+          branchId: b.id,
+          ...expenseDateFilter,
+        },
+      })
       const bExpTotal = bExpenses.reduce((s, e) => s + e.amount, 0)
 
       branchComparison.push({
@@ -193,51 +243,86 @@ dashboardRouter.get('/', async (req: Request, res: Response) => {
         branchName: b.name,
         branchCode: b.code,
         activeStudents: bAdmissions.length,
-        totalCollections: bCollected,
+        totalCollections: bTotalCollections,
         totalExpenses: bExpTotal,
-        pendingDues: Math.max(0, bExpected - bCollected),
+        netMovement: bTotalCollections - bExpTotal,
+        pendingDues: Math.max(0, bExpected - bActiveCollected),
       })
     }
 
-    // 7. Recent Transactions (Fees + Expenses merged)
+    // 7. Recent Transactions (Fees + Expenses merged, strictly ordered by actual action timestamp descending)
     const recentFees = await prisma.payment.findMany({
-      where: { ...branchFilter, isReversed: false },
+      where: {
+        ...branchFilter,
+        ...sessionFilter,
+        ...standardPaymentFilter,
+      },
       include: { student: true, branch: true },
-      orderBy: { paymentDate: 'desc' },
-      take: 6,
+      orderBy: [
+        { createdAt: 'desc' },
+        { paymentDate: 'desc' },
+      ],
+      take: 20,
     })
 
     const recentExpenses = await prisma.expense.findMany({
       where: branchFilter,
       include: { category: true, branch: true },
-      orderBy: { expenseDate: 'desc' },
-      take: 6,
+      orderBy: [
+        { createdAt: 'desc' },
+        { expenseDate: 'desc' },
+      ],
+      take: 20,
     })
 
     const recentTransactions = [
-      ...recentFees.map((f) => ({
-        id: f.id,
-        type: 'FEE_COLLECTION' as const,
-        title: `Fee: ${f.student.fullName}`,
-        subtitle: `Receipt: ${f.receiptNumber} (${f.paymentMode})`,
-        amount: f.totalAmount,
-        date: f.paymentDate.toISOString(),
-        branchName: f.branch.name,
-        isIncome: true,
-      })),
+      ...recentFees.map((f) => {
+        const isRev = f.isReversed
+        const actionTime = isRev && f.reversedAt ? f.reversedAt : f.createdAt
+        return {
+          id: f.id,
+          type: isRev ? ('FEE_REVERSAL' as const) : ('FEE_COLLECTION' as const),
+          title: isRev
+            ? `Fee Reversed: ${f.student?.fullName || 'Student'}`
+            : `Fee: ${f.student?.fullName || 'Student'}`,
+          subtitle: isRev
+            ? `Receipt: ${f.receiptNumber} (${f.paymentMode}) • ${f.reversalReason || 'Cancelled'}`
+            : `Receipt: ${f.receiptNumber} (${f.paymentMode})`,
+          amount: f.totalAmount,
+          date: f.paymentDate.toISOString(),
+          createdAt: f.createdAt ? f.createdAt.toISOString() : f.paymentDate.toISOString(),
+          actionTime: actionTime ? actionTime.toISOString() : f.paymentDate.toISOString(),
+          branchName: f.branch?.name || 'Main Branch',
+          paymentMode: f.paymentMode,
+          studentId: f.studentId,
+          isIncome: !isRev,
+          isReversed: f.isReversed,
+          reversalReason: f.reversalReason,
+        }
+      }),
       ...recentExpenses.map((e) => ({
         id: e.id,
         type: 'EXPENSE' as const,
         title: `Expense: ${e.description}`,
-        subtitle: `Category: ${e.category.name} (${e.paymentMode})`,
+        subtitle: `Category: ${e.category?.name || 'Expense'} (${e.paymentMode}${e.vendor ? ` • ${e.vendor}` : ''})`,
         amount: e.amount,
         date: e.expenseDate.toISOString(),
-        branchName: e.branch.name,
+        createdAt: e.createdAt ? e.createdAt.toISOString() : e.expenseDate.toISOString(),
+        actionTime: e.createdAt ? e.createdAt.toISOString() : e.expenseDate.toISOString(),
+        branchName: e.branch?.name || 'Main Branch',
+        paymentMode: e.paymentMode,
         isIncome: false,
+        isReversed: false,
+        reversalReason: null,
       })),
     ]
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-      .slice(0, 8)
+      .sort((a, b) => {
+        const timeA = new Date(a.actionTime || a.createdAt || a.date).getTime()
+        const timeB = new Date(b.actionTime || b.createdAt || b.date).getTime()
+        if (timeB !== timeA) return timeB - timeA
+        return b.id.localeCompare(a.id)
+      })
+      .slice(0, 10)
 
     res.json({
       today: {

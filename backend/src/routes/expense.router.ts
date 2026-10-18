@@ -220,15 +220,51 @@ expenseRouter.post('/', attachmentUpload.single('attachment'), async (req: Reque
       return res.status(400).json({ error: 'No active branch available' })
     }
 
-    // Resolve category
-    let targetCategoryId = categoryId
-    if (!targetCategoryId) {
-      const name = categoryName || 'Miscellaneous'
-      let cat = await prisma.expenseCategory.findUnique({ where: { name } })
-      if (!cat) {
-        cat = await prisma.expenseCategory.create({ data: { name } })
+    // Resolve category: handle ID, categoryName, or dynamic auto-creation
+    let targetCategoryId = categoryId ? String(categoryId).trim() : ''
+    const candidateName = categoryName ? String(categoryName).trim() : ''
+
+    if (candidateName) {
+      const allCats = await prisma.expenseCategory.findMany()
+      const existing = allCats.find((c) => c.name.toLowerCase() === candidateName.toLowerCase())
+      if (existing) {
+        targetCategoryId = existing.id
+      } else {
+        const newCat = await prisma.expenseCategory.create({
+          data: {
+            name: candidateName,
+            sortOrder: (allCats.length || 0) + 1,
+            isActive: true,
+          },
+        })
+        targetCategoryId = newCat.id
       }
-      targetCategoryId = cat.id
+    } else if (targetCategoryId) {
+      const catById = await prisma.expenseCategory.findUnique({ where: { id: targetCategoryId } })
+      if (!catById) {
+        const allCats = await prisma.expenseCategory.findMany()
+        const matchByName = allCats.find((c) => c.name.toLowerCase() === targetCategoryId.toLowerCase())
+        if (matchByName) {
+          targetCategoryId = matchByName.id
+        } else {
+          const newCat = await prisma.expenseCategory.create({
+            data: {
+              name: targetCategoryId,
+              sortOrder: (allCats.length || 0) + 1,
+              isActive: true,
+            },
+          })
+          targetCategoryId = newCat.id
+        }
+      }
+    }
+
+    if (!targetCategoryId) {
+      const defaultCat = await prisma.expenseCategory.findFirst({
+        where: { isActive: true },
+        orderBy: { sortOrder: 'asc' },
+      })
+      targetCategoryId = defaultCat?.id || ''
     }
 
     const expense = await prisma.$transaction(async (tx) => {
@@ -292,7 +328,7 @@ expenseRouter.post('/', attachmentUpload.single('attachment'), async (req: Reque
 expenseRouter.put('/:id', async (req: Request, res: Response) => {
   try {
     const id = String(req.params.id)
-    const { description, amount, categoryId, paymentMode, vendor, referenceNumber, expenseDate, branchId } =
+    const { description, amount, categoryId, categoryName, paymentMode, vendor, referenceNumber, expenseDate, branchId } =
       req.body
 
     const existing = await prisma.expense.findUnique({ where: { id } })
@@ -300,12 +336,51 @@ expenseRouter.put('/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Expense not found' })
     }
 
+    let targetCategoryId = categoryId ? String(categoryId).trim() : undefined
+    const candidateName = categoryName ? String(categoryName).trim() : ''
+
+    if (candidateName) {
+      const allCats = await prisma.expenseCategory.findMany()
+      const match = allCats.find((c) => c.name.toLowerCase() === candidateName.toLowerCase())
+      if (match) {
+        targetCategoryId = match.id
+      } else {
+        const newCat = await prisma.expenseCategory.create({
+          data: {
+            name: candidateName,
+            sortOrder: (allCats.length || 0) + 1,
+            isActive: true,
+          },
+        })
+        targetCategoryId = newCat.id
+      }
+    } else if (targetCategoryId) {
+      const catById = await prisma.expenseCategory.findUnique({ where: { id: targetCategoryId } })
+      if (!catById) {
+        const allCats = await prisma.expenseCategory.findMany()
+        const catTarget = String(targetCategoryId).toLowerCase()
+        const matchByName = allCats.find((c) => c.name.toLowerCase() === catTarget)
+        if (matchByName) {
+          targetCategoryId = matchByName.id
+        } else {
+          const newCat = await prisma.expenseCategory.create({
+            data: {
+              name: targetCategoryId,
+              sortOrder: (allCats.length || 0) + 1,
+              isActive: true,
+            },
+          })
+          targetCategoryId = newCat.id
+        }
+      }
+    }
+
     const updated = await prisma.expense.update({
       where: { id },
       data: {
         description: description ? String(description).trim() : undefined,
         amount: amount !== undefined ? Number(amount) : undefined,
-        categoryId: categoryId || undefined,
+        categoryId: targetCategoryId || undefined,
         branchId: branchId || undefined,
         paymentMode: paymentMode || undefined,
         vendor: vendor !== undefined ? (vendor ? String(vendor).trim() : null) : undefined,

@@ -42,7 +42,7 @@ export const PromoteStudentModal: React.FC<PromoteStudentModalProps> = ({
   onSuccess,
 }) => {
   const queryClient = useQueryClient()
-  const { branches, sessions } = useApp()
+  const { branches, sessions, courses, activeCourses } = useApp()
 
   // Form states
   const [targetSessionId, setTargetSessionId] = useState('')
@@ -280,12 +280,29 @@ export const PromoteStudentModal: React.FC<PromoteStudentModalProps> = ({
                 <label className="font-semibold text-foreground">
                   Promoted Standard / Class *
                 </label>
-                <Input
+                <select
                   value={targetStandard}
-                  onChange={(e) => setTargetStandard(e.target.value)}
-                  placeholder="e.g. Class 11 Science"
+                  onChange={(e) => {
+                    const val = e.target.value
+                    setTargetStandard(val)
+                    const matched = courses.find((c) => c.name === val)
+                    if (matched?.defaultFee) {
+                      setNewTotalFees(String(matched.defaultFee))
+                    }
+                  }}
+                  className="w-full h-9 rounded-md border border-input bg-background px-3 text-xs focus:outline-none"
                   required
-                />
+                >
+                  <option value="">-- Select Class / Course --</option>
+                  {targetStandard && !courses.some((c) => c.name.toLowerCase() === targetStandard.toLowerCase()) && (
+                    <option value={targetStandard}>{targetStandard} (Suggested)</option>
+                  )}
+                  {courses.map((c) => (
+                    <option key={c.id} value={c.name}>
+                      {c.name} {c.code ? `(${c.code})` : ''} {c.defaultFee ? `· ₹${c.defaultFee.toLocaleString('en-IN')}` : ''} {!c.isActive ? '(Archived)' : ''}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="space-y-1.5">
@@ -305,8 +322,8 @@ export const PromoteStudentModal: React.FC<PromoteStudentModalProps> = ({
             <div className="space-y-1.5">
               <label className="font-semibold text-foreground flex items-center justify-between">
                 <span>Agreed Total Fees for New Session (₹) *</span>
-                <span className="text-[11px] text-muted-foreground font-normal">
-                  Auto-generates 3 installments (40% / 30% / 30%)
+                <span className="text-[11px] text-emerald-600 font-medium">
+                  Flexible payment (any amount, anytime)
                 </span>
               </label>
               <Input

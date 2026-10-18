@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import request from 'supertest'
+import { createApp } from '../src/app'
 import { prisma } from '../src/services/db'
 import { calculateInstallmentStatus } from '../src/routes/student.router'
 
@@ -151,5 +153,31 @@ describe('Advanced Student Management & Installment Logic', () => {
     })
     expect(preservedPayments.length).toBe(1)
     expect(preservedPayments[0].totalAmount).toBe(10000)
+
+    // Permanent Deletion: DELETE /api/students/:id cascades everything cleanly
+    const app = createApp()
+    const deleteRes = await request(app).delete(`/api/students/${student.id}`)
+    expect(deleteRes.status).toBe(200)
+    expect(deleteRes.body.success).toBe(true)
+
+    // Verify all records deleted
+    const deletedStudent = await prisma.student.findUnique({ where: { id: student.id } })
+    expect(deletedStudent).toBeNull()
+
+    const remainingAdmissions = await prisma.studentAdmission.findMany({ where: { studentId: student.id } })
+    expect(remainingAdmissions.length).toBe(0)
+
+    const remainingFeePlans = await prisma.feePlan.findMany({ where: { id: feePlan.id } })
+    expect(remainingFeePlans.length).toBe(0)
+
+    const remainingInstallments = await prisma.installment.findMany({ where: { feePlanId: feePlan.id } })
+    expect(remainingInstallments.length).toBe(0)
+
+    const remainingPayments = await prisma.payment.findMany({ where: { studentId: student.id } })
+    expect(remainingPayments.length).toBe(0)
+
+    // Calling delete on already-deleted student returns 404
+    const notFoundRes = await request(app).delete(`/api/students/${student.id}`)
+    expect(notFoundRes.status).toBe(404)
   })
 })

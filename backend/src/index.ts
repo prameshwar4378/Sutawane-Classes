@@ -1,6 +1,7 @@
 import { createApp } from './app';
 import { PORT, storagePaths } from './config/index';
 import { checkDatabaseConnection } from './services/db';
+import { seedDefaultUsers } from './services/auth.service';
 
 async function bootstrap() {
   const app = createApp();
@@ -8,6 +9,7 @@ async function bootstrap() {
   const isConnected = await checkDatabaseConnection();
   if (isConnected) {
     console.log(`[Database] SQLite connected successfully at: ${storagePaths.databasePath}`);
+    await seedDefaultUsers();
   } else {
     console.warn(`[Database] SQLite connection check failed. Will attempt to run migrations or db push.`);
   }

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { useApp } from '@/context/AppContext'
@@ -57,12 +57,16 @@ import {
   ChevronLeft,
   ChevronRight,
   ShieldAlert,
+  Download,
   X,
+  Trash2,
+  AlertTriangle,
 } from 'lucide-react'
 import { formatCurrency, formatDate } from '@/lib/utils'
-import { exportStudentsToExcel, exportStudentsToPDF } from '@/lib/exportUtils'
+import { exportStudentsToExcel, exportStudentsToPDF, PDF_EXPORT_COLUMNS } from '@/lib/exportUtils'
 import { PromoteStudentModal } from '@/components/PromoteStudentModal'
 import { BatchPromoteModal } from '@/components/BatchPromoteModal'
+import { WhatsAppIcon, openWhatsApp, buildFeeReminderWhatsAppMessage } from '@/lib/whatsapp'
 
 // Column Definition Schema
 interface ColumnDef {
@@ -93,13 +97,32 @@ const ALL_COLUMNS: ColumnDef[] = [
 export const StudentsPage: React.FC = () => {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const { selectedBranchId, selectedSessionId, branches, sessions, currentBranch, currentSession } = useApp()
+  const { selectedBranchId, selectedSessionId, branches, sessions, currentBranch, currentSession, courses, activeCourses, settings, activeLogoUrl } = useApp()
 
   // Modals & UI States
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isColumnModalOpen, setIsColumnModalOpen] = useState(false)
+  const [isPdfExportModalOpen, setIsPdfExportModalOpen] = useState(false)
+  const [selectedPdfColumns, setSelectedPdfColumns] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('sutawane_pdf_columns')
+      if (saved) return JSON.parse(saved)
+    } catch {}
+    return PDF_EXPORT_COLUMNS.filter((c) => c.defaultSelected).map((c) => c.id)
+  })
+  const location = useLocation()
   const [archiveTarget, setArchiveTarget] = useState<any>(null)
+  const [deleteTarget, setDeleteTarget] = useState<any>(null)
+  const [deleteConfirmText, setDeleteConfirmText] = useState('')
   const [toastMsg, setToastMsg] = useState('')
+
+  useEffect(() => {
+    if (location.state?.toast) {
+      setToastMsg(location.state.toast)
+      window.history.replaceState({}, document.title)
+      setTimeout(() => setToastMsg(''), 4500)
+    }
+  }, [location.state])
 
   // Promotion States
   const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -148,6 +171,7 @@ export const StudentsPage: React.FC = () => {
   const [rollNumber, setRollNumber] = useState('')
   const [standard, setStandard] = useState('Class 10')
   const [branchId, setBranchId] = useState('')
+  const [admissionSessionId, setAdmissionSessionId] = useState('')
   const [parentPhone, setParentPhone] = useState('')
   const [studentPhone, setStudentPhone] = useState('')
   const [address, setAddress] = useState('')
@@ -178,16 +202,32 @@ export const StudentsPage: React.FC = () => {
   const searchSuggestions = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
     if (!q) return []
+    const terms = q.split(/\s+/).filter(Boolean)
     return rawStudents
       .filter((s: any) => {
-        return (
-          s.fullName?.toLowerCase().includes(q) ||
-          s.rollNumber?.toLowerCase().includes(q) ||
-          s.parentPhone?.includes(q) ||
-          (s.studentCode && s.studentCode.toLowerCase().includes(q))
-        )
+        const name = (s.fullName || '').toLowerCase()
+        const roll = (s.rollNumber || '').toLowerCase()
+        const phone = (s.parentPhone || '').replace(/\D/g, '')
+        const studentPhone = (s.studentPhone || '').replace(/\D/g, '')
+        const code = (s.studentCode || '').toLowerCase()
+        const standard = (s.standard || '').toLowerCase()
+        const branch = (s.branchName || '').toLowerCase()
+
+        return terms.every((term) => {
+          const cleanDigits = term.replace(/\D/g, '')
+          return (
+            name.includes(term) ||
+            roll.includes(term) ||
+            code.includes(term) ||
+            standard.includes(term) ||
+            branch.includes(term) ||
+            (cleanDigits && phone.includes(cleanDigits)) ||
+            (cleanDigits && studentPhone.includes(cleanDigits)) ||
+            s.parentPhone?.includes(term)
+          )
+        })
       })
-      .slice(0, 8)
+      .slice(0, 10)
   }, [rawStudents, searchQuery])
 
   // Click outside to close search suggestions dropdown
@@ -207,6 +247,7 @@ export const StudentsPage: React.FC = () => {
     onSuccess: (res: any) => {
       queryClient.invalidateQueries({ queryKey: ['students'] })
       queryClient.invalidateQueries({ queryKey: ['financial-stats'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard-analytics'] })
       setIsDialogOpen(false)
       showToast('Student admitted successfully!')
       if (res?.student?.id) {
@@ -225,8 +266,29 @@ export const StudentsPage: React.FC = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['students'] })
       queryClient.invalidateQueries({ queryKey: ['financial-stats'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard-analytics'] })
       setArchiveTarget(null)
       showToast('Student status updated successfully!')
+    },
+  })
+
+  // Permanent cascade delete mutation
+  const deleteMutation = useMutation({
+    mutationFn: (studentId: string) => api.delete(`/students/${studentId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['students'] })
+      queryClient.invalidateQueries({ queryKey: ['financial-stats'] })
+      queryClient.invalidateQueries({ queryKey: ['reports'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard-analytics'] })
+      showToast(`Student "${deleteTarget?.fullName || 'Record'}" and all associated fee records deleted permanently.`)
+      setDeleteTarget(null)
+      setDeleteConfirmText('')
+    },
+    onError: (err: any) => {
+      showToast(err.message || 'Failed to delete student')
+      setDeleteTarget(null)
+      setDeleteConfirmText('')
     },
   })
 
@@ -270,7 +332,7 @@ export const StudentsPage: React.FC = () => {
   }
 
   const toggleSelectAll = (visibleItems: any[]) => {
-    const visibleIds = visibleItems.map((s) => s.id)
+    const visibleIds = visibleItems.map((s) => s.admissionId || s.id)
     const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id))
 
     if (allSelected) {
@@ -288,6 +350,17 @@ export const StudentsPage: React.FC = () => {
       setSortField(field)
       setSortDirection('asc')
     }
+  }
+
+  const renderSortIcon = (field: string) => {
+    if (sortField === field) {
+      return sortDirection === 'asc' ? (
+        <ArrowUp className="w-3.5 h-3.5 text-amber-300 font-bold" />
+      ) : (
+        <ArrowDown className="w-3.5 h-3.5 text-amber-300 font-bold" />
+      )
+    }
+    return <ArrowUpDown className="w-3.5 h-3.5 text-white/50 group-hover:text-white/90" />
   }
 
   // Filter & Sort Pipeline
@@ -329,16 +402,24 @@ export const StudentsPage: React.FC = () => {
   // Summary Metrics computed from all currently filtered records
   const metrics = useMemo(() => {
     const totalCount = filteredAndSortedStudents.length
-    const totalSessionFees = filteredAndSortedStudents.reduce((sum, s) => sum + (s.totalFees || 0), 0)
+    const activeCount = filteredAndSortedStudents.filter((s: any) => s.isActive).length
+    const archivedCount = filteredAndSortedStudents.filter((s: any) => !s.isActive).length
+
+    // Active records isolate live commitments and dues so deactivated/archived admissions don't skew active financials
+    const activeStudents = filteredAndSortedStudents.filter((s: any) => s.isActive)
+
+    const totalSessionFees = activeStudents.reduce((sum, s) => sum + (s.totalFees || 0), 0)
     const totalSessionPaid = filteredAndSortedStudents.reduce((sum, s) => sum + (s.paidFees || 0), 0)
-    const totalSessionPending = filteredAndSortedStudents.reduce((sum, s) => sum + (s.pendingFees || 0), 0)
-    const totalOverallPending = filteredAndSortedStudents.reduce(
+    const totalSessionPending = activeStudents.reduce((sum, s) => sum + (s.pendingFees || 0), 0)
+    const totalOverallPending = activeStudents.reduce(
       (sum, s) => sum + (s.overallPendingAmount !== undefined ? s.overallPendingAmount : s.pendingFees || 0),
       0
     )
 
     return {
       totalCount,
+      activeCount,
+      archivedCount,
       totalSessionFees,
       totalSessionPaid,
       totalSessionPending,
@@ -354,7 +435,7 @@ export const StudentsPage: React.FC = () => {
   }, [filteredAndSortedStudents, currentPage, pageSize])
 
   const selectedStudentsList = useMemo(() => {
-    return rawStudents.filter((s: any) => selectedIds.includes(s.id))
+    return rawStudents.filter((s: any) => selectedIds.includes(s.admissionId || s.id))
   }, [rawStudents, selectedIds])
 
   // Export handlers
@@ -366,43 +447,108 @@ export const StudentsPage: React.FC = () => {
     showToast(`Exported ${filteredAndSortedStudents.length} student records to Excel (.xlsx)`)
   }
 
+  const togglePdfColumn = (id: string) => {
+    setSelectedPdfColumns((prev) => {
+      const next = prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id]
+      localStorage.setItem('sutawane_pdf_columns', JSON.stringify(next))
+      return next
+    })
+  }
+
+  const selectAllPdfColumns = () => {
+    const allIds = PDF_EXPORT_COLUMNS.map((c) => c.id)
+    setSelectedPdfColumns(allIds)
+    localStorage.setItem('sutawane_pdf_columns', JSON.stringify(allIds))
+  }
+
+  const deselectAllPdfColumns = () => {
+    setSelectedPdfColumns([])
+    localStorage.setItem('sutawane_pdf_columns', JSON.stringify([]))
+  }
+
+  const resetDefaultPdfColumns = () => {
+    const defIds = PDF_EXPORT_COLUMNS.filter((c) => c.defaultSelected).map((c) => c.id)
+    setSelectedPdfColumns(defIds)
+    localStorage.setItem('sutawane_pdf_columns', JSON.stringify(defIds))
+  }
+
+  const selectFinancialPdfColumns = () => {
+    const finIds = [
+      'srNo',
+      'rollNumber',
+      'fullName',
+      'standard',
+      'totalFees',
+      'paidFees',
+      'pendingFees',
+      'previousDuesPending',
+      'overallPendingAmount',
+      'status',
+    ]
+    setSelectedPdfColumns(finIds)
+    localStorage.setItem('sutawane_pdf_columns', JSON.stringify(finIds))
+  }
+
   const handleExportPDF = () => {
-    exportStudentsToPDF(filteredAndSortedStudents, {
+    setIsPdfExportModalOpen(true)
+  }
+
+  const handleConfirmExportPDF = async () => {
+    if (selectedPdfColumns.length === 0) {
+      showToast('Please select at least one column for the PDF report.')
+      return
+    }
+    await exportStudentsToPDF(filteredAndSortedStudents, {
+      instituteName: settings?.institute_name || currentBranch?.name || 'Sutawane Classes',
       branchName: currentBranch?.name,
       sessionName: currentSession?.name,
+      logoUrl: activeLogoUrl || settings?.logo_url,
+      tagline: settings?.tagline,
+      selectedColumnIds: selectedPdfColumns,
     })
-    showToast(`Generated official PDF report for ${filteredAndSortedStudents.length} students`)
+    setIsPdfExportModalOpen(false)
+    showToast(
+      `Generated official PDF with ${selectedPdfColumns.length} columns for ${filteredAndSortedStudents.length} students`
+    )
   }
 
   // 1-Click WhatsApp Reminder
   const handleSendWhatsAppReminder = (student: any) => {
-    const phone = student.parentPhone?.replace(/\D/g, '')
-    if (!phone || phone.length < 10) {
+    if (!student.parentPhone || student.parentPhone.replace(/\D/g, '').length < 10) {
       showToast('Parent mobile number is invalid or missing.')
       return
     }
 
-    const currentPending = formatCurrency(student.pendingFees || 0)
-    const overallPending = formatCurrency(student.overallPendingAmount ?? student.pendingFees ?? 0)
-    const branchText = student.branchName ? ` (${student.branchName})` : ''
+    const message = buildFeeReminderWhatsAppMessage({
+      instituteName: settings?.institute_name,
+      studentName: student.fullName,
+      rollNumber: student.rollNumber,
+      standard: student.standard,
+      pendingAmount: student.pendingFees || 0,
+      overallPendingAmount: student.overallPendingAmount ?? student.pendingFees ?? 0,
+      branchName: student.branchName,
+      helpline: settings?.phone,
+    })
 
-    const message = encodeURIComponent(
-      `Dear Parent, greetings from Sutawane Classes${branchText}.\n\nThis is a friendly fee reminder for *${student.fullName}* (Roll No: *${student.rollNumber}*, Course: *${student.standard}*).\n\n- Current Session Pending: *${currentPending}*\n- Overall Total Outstanding: *${overallPending}*\n\nKindly clear the outstanding dues at the center office or via UPI at your earliest convenience. Thank you!\n— Sutawane Classes`
-    )
-
-    window.open(`https://wa.me/91${phone}?text=${message}`, '_blank')
+    openWhatsApp(student.parentPhone, message)
   }
 
   // Form Reset and Open
   const openCreateDialog = () => {
+    const defaultCourse = activeCourses[0] || courses[0]
     setFullName('')
     setRollNumber(`SC-${Math.floor(1000 + Math.random() * 9000)}`)
-    setStandard('Class 10')
+    setStandard(defaultCourse ? defaultCourse.name : 'Class 10')
     setBranchId(selectedBranchId !== 'ALL' ? selectedBranchId : branches[0]?.id || '')
+    setAdmissionSessionId(
+      selectedSessionId && selectedSessionId !== 'ALL'
+        ? selectedSessionId
+        : currentSession?.id || sessions.find((s) => s.isCurrent)?.id || sessions[0]?.id || ''
+    )
     setParentPhone('')
     setStudentPhone('')
     setAddress('')
-    setTotalFees('25000')
+    setTotalFees(defaultCourse?.defaultFee ? String(defaultCourse.defaultFee) : '25000')
     setFormError('')
     setIsDialogOpen(true)
   }
@@ -419,12 +565,21 @@ export const StudentsPage: React.FC = () => {
       return
     }
 
+    // Resolve safe valid branchId and sessionId (never pass 'ALL' to admission creation)
+    const targetBranch = branchId && branchId !== 'ALL' ? branchId : branches[0]?.id
+    const targetSession =
+      admissionSessionId && admissionSessionId !== 'ALL'
+        ? admissionSessionId
+        : selectedSessionId && selectedSessionId !== 'ALL'
+        ? selectedSessionId
+        : currentSession?.id || sessions.find((s) => s.isCurrent)?.id || sessions[0]?.id
+
     createMutation.mutate({
       fullName: fullName.trim(),
       rollNumber: rollNumber.trim(),
       standard: standard.trim(),
-      branchId: branchId || undefined,
-      sessionId: selectedSessionId || undefined,
+      branchId: targetBranch,
+      sessionId: targetSession,
       parentPhone: parentPhone.trim(),
       studentPhone: studentPhone.trim() || undefined,
       address: address.trim() || undefined,
@@ -519,7 +674,15 @@ export const StudentsPage: React.FC = () => {
             <Users className="w-3.5 h-3.5 text-primary" />
           </div>
           <div className="text-xl font-bold text-foreground mt-1">{metrics.totalCount}</div>
-          <p className="text-[10px] text-muted-foreground mt-0.5">Matching active filters</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">
+            {metrics.archivedCount > 0 ? (
+              <span className="text-amber-600 dark:text-amber-400 font-medium">
+                {metrics.activeCount} Active • {metrics.archivedCount} Archived
+              </span>
+            ) : (
+              'Matching active filters'
+            )}
+          </p>
         </Card>
 
         {/* Selected Session Total Fees Card */}
@@ -603,8 +766,9 @@ export const StudentsPage: React.FC = () => {
                 } else if (e.key === 'Enter') {
                   if (searchHighlightIndex >= 0 && searchHighlightIndex < searchSuggestions.length) {
                     e.preventDefault()
-                    setSearchQuery(searchSuggestions[searchHighlightIndex].fullName)
+                    const selectedStudent = searchSuggestions[searchHighlightIndex]
                     setIsSearchSuggestionsOpen(false)
+                    navigate(`/students/${selectedStudent.id}`)
                   }
                 } else if (e.key === 'Escape') {
                   setIsSearchSuggestionsOpen(false)
@@ -633,7 +797,7 @@ export const StudentsPage: React.FC = () => {
                   <span>
                     Matching Students in {selectedBranchId === 'ALL' ? 'All Branches' : currentBranch?.name || 'Branch'} ({searchSuggestions.length})
                   </span>
-                  <span className="text-[10px]">Click to filter table or jump to actions</span>
+                  <span className="text-[10px] text-muted-foreground">Click option to view profile</span>
                 </div>
 
                 {searchSuggestions.length === 0 ? (
@@ -646,23 +810,27 @@ export const StudentsPage: React.FC = () => {
                     const overallDue = s.overallPendingAmount !== undefined ? s.overallPendingAmount : s.pendingFees || 0
                     return (
                       <div
-                        key={s.id}
-                        className={`p-2 px-3 flex items-center justify-between gap-2 text-xs transition-colors cursor-pointer ${
-                          isHighlighted ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/50'
+                        key={`${s.id}-${s.admissionId || s.rollNumber || idx}`}
+                        className={`p-2.5 px-3 flex items-center justify-between gap-3 text-xs transition-colors cursor-pointer select-none ${
+                          isHighlighted ? 'bg-accent text-accent-foreground' : 'hover:bg-muted/60'
                         }`}
                         onMouseEnter={() => setSearchHighlightIndex(idx)}
                         onMouseDown={(e) => {
                           e.preventDefault()
-                          setSearchQuery(s.fullName)
                           setIsSearchSuggestionsOpen(false)
+                          navigate(`/students/${s.id}`)
+                        }}
+                        onClick={() => {
+                          setIsSearchSuggestionsOpen(false)
+                          navigate(`/students/${s.id}`)
                         }}
                       >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <div className="w-6 h-6 rounded-full overflow-hidden bg-muted flex items-center justify-center border text-[9px] flex-shrink-0">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="w-7 h-7 rounded-full overflow-hidden bg-muted flex items-center justify-center border text-[9px] flex-shrink-0">
                             {s.photoUrl ? (
                               <img src={s.photoUrl} alt="" className="w-full h-full object-cover" />
                             ) : (
-                              <User className="w-3 h-3 text-muted-foreground" />
+                              <User className="w-3.5 h-3.5 text-muted-foreground" />
                             )}
                           </div>
                           <div className="min-w-0">
@@ -684,40 +852,16 @@ export const StudentsPage: React.FC = () => {
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                        <div className="flex items-center gap-2 flex-shrink-0">
                           {overallDue > 0 ? (
-                            <Badge variant="danger" className="text-[10px] py-0 px-1.5 font-semibold">
+                            <Badge variant="danger" className="text-[10px] py-0.5 px-2 font-semibold">
                               Due: {formatCurrency(overallDue)}
                             </Badge>
                           ) : (
-                            <Badge variant="success" className="text-[10px] py-0 px-1.5 font-semibold">
+                            <Badge variant="success" className="text-[10px] py-0.5 px-2 font-semibold">
                               Cleared
                             </Badge>
                           )}
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onMouseDown={(e) => {
-                              e.stopPropagation()
-                              navigate(`/students/${s.id}`)
-                            }}
-                            className="h-6 px-1.5 text-[10px] gap-1"
-                          >
-                            <Eye className="w-3 h-3" />
-                            Profile
-                          </Button>
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onMouseDown={(e) => {
-                              e.stopPropagation()
-                              navigate('/fees/collect')
-                            }}
-                            className="h-6 px-1.5 text-[10px] gap-1 bg-emerald-600 hover:bg-emerald-700 text-white"
-                          >
-                            <CreditCard className="w-3 h-3" />
-                            Fee
-                          </Button>
                         </div>
                       </div>
                     )
@@ -760,14 +904,11 @@ export const StudentsPage: React.FC = () => {
               className="w-full h-9 bg-transparent text-xs font-medium focus:outline-none cursor-pointer"
             >
               <option value="ALL">All Classes / Standards</option>
-              <option value="Class 8">Class 8</option>
-              <option value="Class 9">Class 9</option>
-              <option value="Class 10">Class 10</option>
-              <option value="Class 11 Science">Class 11 Science</option>
-              <option value="Class 12 Science">Class 12 Science</option>
-              <option value="Class 11 Commerce">Class 11 Commerce</option>
-              <option value="Class 12 Commerce">Class 12 Commerce</option>
-              <option value="MHT-CET / JEE Foundation">MHT-CET / JEE</option>
+              {courses.map((c) => (
+                <option key={c.id} value={c.name}>
+                  {c.name} {!c.isActive ? '(Archived)' : ''}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -907,40 +1048,36 @@ export const StudentsPage: React.FC = () => {
           ) : (
             <div className="overflow-x-auto">
               <Table className="w-full">
-                <TableHeader className="bg-muted/40">
-                  <TableRow>
+                <TableHeader className="bg-[#28375C] text-white">
+                  <TableRow className="border-b border-[#1b2640] hover:bg-[#28375C] bg-[#28375C]">
                     {/* Select Checkbox Column */}
                     {visibleColumns.select && (
-                      <TableHead className="w-10 px-3">
+                      <TableHead className="w-10 px-3 text-white">
                         <input
                           type="checkbox"
                           checked={
                             paginatedStudents.length > 0 &&
-                            paginatedStudents.every((s) => selectedIds.includes(s.id))
+                            paginatedStudents.every((s) => selectedIds.includes(s.admissionId || s.id))
                           }
                           onChange={() => toggleSelectAll(paginatedStudents)}
-                          className="w-4 h-4 rounded text-primary border-gray-300 focus:ring-primary cursor-pointer"
+                          className="w-4 h-4 rounded text-primary border-gray-300 focus:ring-primary cursor-pointer accent-white"
                           title="Select / Deselect All Visible On This Page"
                         />
                       </TableHead>
                     )}
 
                     {/* Photo Column */}
-                    {visibleColumns.photo && <TableHead className="w-12 px-2 text-center">Photo</TableHead>}
+                    {visibleColumns.photo && <TableHead className="w-12 px-2 text-center text-white">Photo</TableHead>}
 
                     {/* Roll No Column */}
                     {visibleColumns.rollNo && (
                       <TableHead
                         onClick={() => handleSort('rollNumber')}
-                        className="cursor-pointer hover:text-foreground transition-colors select-none whitespace-nowrap"
+                        className="cursor-pointer hover:text-white hover:bg-[#1f2c4a] transition-colors select-none whitespace-nowrap text-white group"
                       >
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1 text-white">
                           <span>Roll No.</span>
-                          {sortField === 'rollNumber' ? (
-                            sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-primary" /> : <ArrowDown className="w-3 h-3 text-primary" />
-                          ) : (
-                            <ArrowUpDown className="w-3 h-3 opacity-40" />
-                          )}
+                          {renderSortIcon('rollNumber')}
                         </div>
                       </TableHead>
                     )}
@@ -949,15 +1086,11 @@ export const StudentsPage: React.FC = () => {
                     {visibleColumns.fullName && (
                       <TableHead
                         onClick={() => handleSort('fullName')}
-                        className="cursor-pointer hover:text-foreground transition-colors select-none min-w-[160px]"
+                        className="cursor-pointer hover:text-white hover:bg-[#1f2c4a] transition-colors select-none min-w-[160px] text-white group"
                       >
-                        <div className="flex items-center gap-1 font-semibold text-foreground">
+                        <div className="flex items-center gap-1 font-semibold text-white">
                           <span>Student Name</span>
-                          {sortField === 'fullName' ? (
-                            sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-primary" /> : <ArrowDown className="w-3 h-3 text-primary" />
-                          ) : (
-                            <ArrowUpDown className="w-3 h-3 opacity-40" />
-                          )}
+                          {renderSortIcon('fullName')}
                         </div>
                       </TableHead>
                     )}
@@ -966,44 +1099,36 @@ export const StudentsPage: React.FC = () => {
                     {visibleColumns.standard && (
                       <TableHead
                         onClick={() => handleSort('standard')}
-                        className="cursor-pointer hover:text-foreground transition-colors select-none whitespace-nowrap"
+                        className="cursor-pointer hover:text-white hover:bg-[#1f2c4a] transition-colors select-none whitespace-nowrap text-white group"
                       >
-                        <div className="flex items-center gap-1">
+                        <div className="flex items-center gap-1 text-white">
                           <span>Standard</span>
-                          {sortField === 'standard' ? (
-                            sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-primary" /> : <ArrowDown className="w-3 h-3 text-primary" />
-                          ) : (
-                            <ArrowUpDown className="w-3 h-3 opacity-40" />
-                          )}
+                          {renderSortIcon('standard')}
                         </div>
                       </TableHead>
                     )}
 
                     {/* Branch Column */}
-                    {visibleColumns.branch && <TableHead className="whitespace-nowrap">Branch</TableHead>}
+                    {visibleColumns.branch && <TableHead className="whitespace-nowrap text-white">Branch</TableHead>}
 
                     {/* Academic Session Column */}
-                    {visibleColumns.session && <TableHead className="whitespace-nowrap">Session</TableHead>}
+                    {visibleColumns.session && <TableHead className="whitespace-nowrap text-white">Session</TableHead>}
 
                     {/* Parent Phone Column */}
-                    {visibleColumns.parentPhone && <TableHead className="whitespace-nowrap">Parent Phone</TableHead>}
+                    {visibleColumns.parentPhone && <TableHead className="whitespace-nowrap text-white">Parent Phone</TableHead>}
 
                     {/* Student Phone Column */}
-                    {visibleColumns.studentPhone && <TableHead className="whitespace-nowrap">Student Phone</TableHead>}
+                    {visibleColumns.studentPhone && <TableHead className="whitespace-nowrap text-white">Student Phone</TableHead>}
 
                     {/* Selected Session Total Fees Column */}
                     {visibleColumns.totalFees && (
                       <TableHead
                         onClick={() => handleSort('totalFees')}
-                        className="cursor-pointer hover:text-foreground text-right whitespace-nowrap select-none"
+                        className="cursor-pointer hover:text-white hover:bg-[#1f2c4a] text-right whitespace-nowrap select-none text-white group"
                       >
-                        <div className="flex items-center justify-end gap-1">
+                        <div className="flex items-center justify-end gap-1 text-white">
                           <span>Session Total Fees</span>
-                          {sortField === 'totalFees' ? (
-                            sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-primary" /> : <ArrowDown className="w-3 h-3 text-primary" />
-                          ) : (
-                            <ArrowUpDown className="w-3 h-3 opacity-40" />
-                          )}
+                          {renderSortIcon('totalFees')}
                         </div>
                       </TableHead>
                     )}
@@ -1012,15 +1137,11 @@ export const StudentsPage: React.FC = () => {
                     {visibleColumns.paidFees && (
                       <TableHead
                         onClick={() => handleSort('paidFees')}
-                        className="cursor-pointer hover:text-foreground text-right whitespace-nowrap select-none"
+                        className="cursor-pointer hover:text-white hover:bg-[#1f2c4a] text-right whitespace-nowrap select-none text-white group"
                       >
-                        <div className="flex items-center justify-end gap-1">
+                        <div className="flex items-center justify-end gap-1 text-white">
                           <span>Session Paid</span>
-                          {sortField === 'paidFees' ? (
-                            sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-primary" /> : <ArrowDown className="w-3 h-3 text-primary" />
-                          ) : (
-                            <ArrowUpDown className="w-3 h-3 opacity-40" />
-                          )}
+                          {renderSortIcon('paidFees')}
                         </div>
                       </TableHead>
                     )}
@@ -1029,15 +1150,11 @@ export const StudentsPage: React.FC = () => {
                     {visibleColumns.pendingFees && (
                       <TableHead
                         onClick={() => handleSort('pendingFees')}
-                        className="cursor-pointer hover:text-foreground text-right whitespace-nowrap select-none"
+                        className="cursor-pointer hover:text-white hover:bg-[#1f2c4a] text-right whitespace-nowrap select-none text-white group"
                       >
-                        <div className="flex items-center justify-end gap-1">
+                        <div className="flex items-center justify-end gap-1 text-white">
                           <span>Session Pending</span>
-                          {sortField === 'pendingFees' ? (
-                            sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-primary" /> : <ArrowDown className="w-3 h-3 text-primary" />
-                          ) : (
-                            <ArrowUpDown className="w-3 h-3 opacity-40" />
-                          )}
+                          {renderSortIcon('pendingFees')}
                         </div>
                       </TableHead>
                     )}
@@ -1046,36 +1163,33 @@ export const StudentsPage: React.FC = () => {
                     {visibleColumns.overallPending && (
                       <TableHead
                         onClick={() => handleSort('overallPendingAmount')}
-                        className="cursor-pointer hover:text-foreground text-right whitespace-nowrap select-none bg-amber-500/5 font-bold"
+                        className="cursor-pointer hover:text-white hover:bg-[#1f2c4a] text-right whitespace-nowrap select-none font-bold text-white group"
                       >
-                        <div className="flex items-center justify-end gap-1 text-amber-800 dark:text-amber-300">
+                        <div className="flex items-center justify-end gap-1 text-amber-300">
                           <span>Overall Pending Amount</span>
-                          {sortField === 'overallPendingAmount' ? (
-                            sortDirection === 'asc' ? <ArrowUp className="w-3 h-3 text-amber-600" /> : <ArrowDown className="w-3 h-3 text-amber-600" />
-                          ) : (
-                            <ArrowUpDown className="w-3 h-3 opacity-40" />
-                          )}
+                          {renderSortIcon('overallPendingAmount')}
                         </div>
                       </TableHead>
                     )}
 
                     {/* Fee Status Column */}
-                    {visibleColumns.status && <TableHead className="whitespace-nowrap text-center">Status</TableHead>}
+                    {visibleColumns.status && <TableHead className="whitespace-nowrap text-center text-white">Status</TableHead>}
 
                     {/* Actions Column */}
-                    {visibleColumns.actions && <TableHead className="text-right pr-4 min-w-[210px]">Actions</TableHead>}
+                    {visibleColumns.actions && <TableHead className="text-right pr-4 min-w-[210px] text-white font-semibold">Actions</TableHead>}
                   </TableRow>
                 </TableHeader>
 
                 <TableBody>
                   {paginatedStudents.map((s: any) => {
-                    const isSelected = selectedIds.includes(s.id)
+                    const rowKey = s.admissionId || s.id
+                    const isSelected = selectedIds.includes(rowKey)
                     const overallPending = s.overallPendingAmount !== undefined ? s.overallPendingAmount : s.pendingFees || 0
                     const hasPriorDues = s.previousDuesPending && s.previousDuesPending > 0
 
                     return (
                       <TableRow
-                        key={s.id}
+                        key={`${s.id}-${s.admissionId || s.rollNumber || ''}`}
                         className={`hover:bg-muted/40 transition-colors ${
                           isSelected ? 'bg-amber-500/10' : ''
                         }`}
@@ -1086,7 +1200,7 @@ export const StudentsPage: React.FC = () => {
                             <input
                               type="checkbox"
                               checked={isSelected}
-                              onChange={() => toggleSelect(s.id)}
+                              onChange={() => toggleSelect(rowKey)}
                               className="w-4 h-4 rounded text-primary border-gray-300 focus:ring-primary cursor-pointer"
                             />
                           </TableCell>
@@ -1232,16 +1346,20 @@ export const StudentsPage: React.FC = () => {
                         {/* Actions Toolbar */}
                         {visibleColumns.actions && (
                           <TableCell className="text-right pr-4 whitespace-nowrap space-x-1">
-                            {/* 1-Click WhatsApp Reminder Button */}
-                            {s.parentPhone && (overallPending > 0 || s.pendingFees > 0) && (
+                            {/* 1-Click WhatsApp Notification Button */}
+                            {s.parentPhone && (
                               <Button
                                 variant="outline"
                                 size="sm"
                                 onClick={() => handleSendWhatsAppReminder(s)}
-                                className="h-7 w-7 p-0 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 border-emerald-500/40"
-                                title="Send Fee Due Reminder via WhatsApp"
+                                className="h-7 w-7 p-0 text-[#25D366] hover:text-[#20ba59] hover:bg-emerald-50 border-emerald-300"
+                                title={
+                                  overallPending > 0 || s.pendingFees > 0
+                                    ? 'Send Fee Due Reminder via WhatsApp'
+                                    : 'Send WhatsApp Notification'
+                                }
                               >
-                                <MessageCircle className="w-3.5 h-3.5" />
+                                <WhatsAppIcon className="w-3.5 h-3.5" />
                               </Button>
                             )}
 
@@ -1272,8 +1390,14 @@ export const StudentsPage: React.FC = () => {
                             <Button
                               variant="secondary"
                               size="sm"
-                              onClick={() => navigate('/fees/collect')}
-                              className="h-7 px-2 text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
+                              onClick={() => {
+                                const due = overallPending > 0 ? overallPending : (s.pendingFees || '')
+                                navigate(
+                                  `/fees/collect?studentId=${s.id}&admissionId=${s.admissionId || ''}&amount=${due}`
+                                )
+                              }}
+                              className="h-7 px-2 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-medium"
+                              title={`Collect fees for ${s.fullName}`}
                             >
                               <CreditCard className="w-3 h-3 mr-1" />
                               Fee
@@ -1288,6 +1412,20 @@ export const StudentsPage: React.FC = () => {
                               title={s.isActive ? 'Archive Student' : 'Reactivate Student'}
                             >
                               <Archive className="w-3.5 h-3.5" />
+                            </Button>
+
+                            {/* Delete Student */}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setDeleteConfirmText('')
+                                setDeleteTarget(s)
+                              }}
+                              className="h-7 w-7 p-0 text-muted-foreground hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                              title="Permanently Delete Student & All Records"
+                            >
+                              <Trash2 className="w-3.5 h-3.5 text-rose-500" />
                             </Button>
                           </TableCell>
                         )}
@@ -1398,6 +1536,135 @@ export const StudentsPage: React.FC = () => {
         </DialogContent>
       </Dialog>
 
+      {/* PDF Export Column Selection Dialog */}
+      <Dialog open={isPdfExportModalOpen} onOpenChange={setIsPdfExportModalOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2.5 text-base">
+              <div className="w-8 h-8 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-600 flex-shrink-0">
+                <FileText className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <span className="font-bold text-foreground">Export PDF - Select Columns</span>
+                <p className="text-xs font-normal text-muted-foreground mt-0.5">
+                  Customize which columns appear in your downloaded PDF report.
+                </p>
+              </div>
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2 text-xs">
+            {/* Filter Scope Information Bar */}
+            <div className="flex items-center justify-between p-2.5 rounded-lg bg-muted/40 border text-muted-foreground">
+              <div className="flex items-center gap-1.5 flex-wrap text-[11px]">
+                <span className="font-semibold text-foreground">
+                  {filteredAndSortedStudents.length} Students
+                </span>
+                <span>•</span>
+                <span>{selectedBranchId === 'ALL' ? 'All Branches' : currentBranch?.name}</span>
+                <span>•</span>
+                <span>{selectedSessionId === 'ALL' || !selectedSessionId ? 'All Sessions' : currentSession?.name}</span>
+              </div>
+              <Badge variant="outline" className="font-mono text-[10px] flex-shrink-0">
+                {selectedPdfColumns.length} of {PDF_EXPORT_COLUMNS.length} Columns
+              </Badge>
+            </div>
+
+            {/* Quick Action Presets */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={selectAllPdfColumns}
+                className="text-[11px] h-7 px-2.5"
+              >
+                Select All
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={deselectAllPdfColumns}
+                className="text-[11px] h-7 px-2.5"
+              >
+                Deselect All
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={resetDefaultPdfColumns}
+                className="text-[11px] h-7 px-2.5"
+              >
+                Reset Defaults
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={selectFinancialPdfColumns}
+                className="text-[11px] h-7 px-2.5 text-primary border-primary/30"
+              >
+                Financial Columns Only
+              </Button>
+            </div>
+
+            {/* Checkbox Grid */}
+            <div className="grid grid-cols-2 gap-2 max-h-64 overflow-y-auto p-1.5 border rounded-lg bg-background">
+              {PDF_EXPORT_COLUMNS.map((col) => {
+                const isChecked = selectedPdfColumns.includes(col.id)
+                return (
+                  <label
+                    key={col.id}
+                    className={`flex items-center gap-2 p-2 rounded border text-xs cursor-pointer select-none transition-colors ${
+                      isChecked
+                        ? 'bg-rose-50/60 dark:bg-rose-950/20 border-rose-500/30 text-foreground font-medium'
+                        : 'bg-muted/20 border-transparent text-muted-foreground hover:bg-muted/40'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => togglePdfColumn(col.id)}
+                      className="w-3.5 h-3.5 rounded text-rose-600 focus:ring-rose-500 cursor-pointer"
+                    />
+                    <span className="truncate">{col.label}</span>
+                  </label>
+                )
+              })}
+            </div>
+
+            {selectedPdfColumns.length === 0 && (
+              <p className="text-xs text-rose-600 font-medium text-center">
+                Please select at least one column to export.
+              </p>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setIsPdfExportModalOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={handleConfirmExportPDF}
+              disabled={selectedPdfColumns.length === 0 || filteredAndSortedStudents.length === 0}
+              className="gap-1.5 bg-rose-600 hover:bg-rose-700 text-white"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Download PDF ({filteredAndSortedStudents.length} Records)</span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Student Admission Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className="max-w-md">
@@ -1436,17 +1703,29 @@ export const StudentsPage: React.FC = () => {
                   <label className="text-xs font-semibold">Class / Course *</label>
                   <select
                     value={standard}
-                    onChange={(e) => setStandard(e.target.value)}
+                    onChange={(e) => {
+                      const selectedVal = e.target.value
+                      setStandard(selectedVal)
+                      const matched = courses.find((c) => c.name === selectedVal)
+                      if (matched?.defaultFee) {
+                        setTotalFees(String(matched.defaultFee))
+                      }
+                    }}
                     className="w-full h-9 rounded-md border border-input bg-background px-3 text-xs focus:outline-none"
                   >
-                    <option value="Class 8">Class 8</option>
-                    <option value="Class 9">Class 9</option>
-                    <option value="Class 10">Class 10</option>
-                    <option value="Class 11 Science">Class 11 Science</option>
-                    <option value="Class 12 Science">Class 12 Science</option>
-                    <option value="Class 11 Commerce">Class 11 Commerce</option>
-                    <option value="Class 12 Commerce">Class 12 Commerce</option>
-                    <option value="MHT-CET / JEE Foundation">MHT-CET / JEE</option>
+                    {activeCourses.length > 0 ? (
+                      activeCourses.map((c) => (
+                        <option key={c.id} value={c.name}>
+                          {c.name} {c.code ? `(${c.code})` : ''} {c.defaultFee ? `· ₹${c.defaultFee.toLocaleString('en-IN')}` : ''}
+                        </option>
+                      ))
+                    ) : (
+                      courses.map((c) => (
+                        <option key={c.id} value={c.name}>
+                          {c.name} {c.code ? `(${c.code})` : ''}
+                        </option>
+                      ))
+                    )}
                   </select>
                 </div>
               </div>
@@ -1473,26 +1752,45 @@ export const StudentsPage: React.FC = () => {
                 </div>
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold">Branch Location *</label>
-                <select
-                  value={branchId}
-                  onChange={(e) => setBranchId(e.target.value)}
-                  className="w-full h-9 rounded-md border border-input bg-background px-3 text-xs focus:outline-none"
-                >
-                  {branches.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name} ({b.code})
-                    </option>
-                  ))}
-                </select>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold">Branch Location *</label>
+                  <select
+                    value={branchId}
+                    onChange={(e) => setBranchId(e.target.value)}
+                    className="w-full h-9 rounded-md border border-input bg-background px-3 text-xs focus:outline-none"
+                    required
+                  >
+                    {branches.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name} ({b.code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold">Academic Session *</label>
+                  <select
+                    value={admissionSessionId}
+                    onChange={(e) => setAdmissionSessionId(e.target.value)}
+                    className="w-full h-9 rounded-md border border-input bg-background px-3 text-xs focus:outline-none"
+                    required
+                  >
+                    {sessions.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.displayName || s.name} {s.isCurrent ? '(Current)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold flex items-center justify-between">
                   <span>Agreed Total Fees (₹) *</span>
-                  <span className="text-[10px] text-muted-foreground font-normal">
-                    3 installments generated (40% / 30% / 30%)
+                  <span className="text-[10px] text-emerald-600 font-medium">
+                    Flexible payment (pay any amount, anytime)
                   </span>
                 </label>
                 <Input
@@ -1536,7 +1834,7 @@ export const StudentsPage: React.FC = () => {
             </AlertDialogTitle>
             <AlertDialogDescription>
               {archiveTarget?.isActive
-                ? `Archiving ${archiveTarget?.fullName} will safely remove them from the active batch list. All historical financial ledgers, receipts, and installments will be permanently preserved.`
+                ? `Archiving ${archiveTarget?.fullName} will safely remove them from the active batch list. All historical financial ledgers and receipts will be permanently preserved.`
                 : `Reactivating ${archiveTarget?.fullName} will restore them to active status in this academic session.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -1553,6 +1851,81 @@ export const StudentsPage: React.FC = () => {
             >
               Confirm
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Strict Permanent Deletion Confirmation Dialog */}
+      <AlertDialog open={Boolean(deleteTarget)} onOpenChange={() => setDeleteTarget(null)}>
+        <AlertDialogContent className="max-w-md border-rose-500/30">
+          <AlertDialogHeader>
+            <div className="flex items-center gap-3 text-rose-600 dark:text-rose-400">
+              <div className="w-10 h-10 rounded-full bg-rose-100 dark:bg-rose-950/60 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-rose-600 dark:text-rose-400" />
+              </div>
+              <div>
+                <AlertDialogTitle className="text-base font-bold text-rose-700 dark:text-rose-400">
+                  Strict Warning: Permanent Student Deletion
+                </AlertDialogTitle>
+                <p className="text-xs text-muted-foreground font-normal">
+                  This action is completely destructive and CANNOT be undone.
+                </p>
+              </div>
+            </div>
+            <div className="space-y-3 pt-3 text-xs text-foreground">
+              <div className="p-3 bg-rose-50/80 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900 rounded-lg space-y-1.5 text-rose-950 dark:text-rose-200 text-left">
+                <p className="font-semibold text-xs flex items-center gap-1.5 text-rose-700 dark:text-rose-300">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  All of the following records will be permanently erased:
+                </p>
+                <div className="pl-4 text-[11px] space-y-1">
+                  <p>• Student Profile: <strong>{deleteTarget?.fullName}</strong> (ID: {deleteTarget?.studentCode}, Roll: {deleteTarget?.rollNumber || '—'})</p>
+                  <p>• All Academic Admissions & Session Progression records</p>
+                  <p>• All Fee Commitments, Plans & Installment schedules</p>
+                  <p>• All Fee Payment Transactions, Allocations & Official Receipts</p>
+                  <p>• All Prior Dues & Outstanding Ledgers</p>
+                </div>
+              </div>
+
+              <p className="text-xs text-muted-foreground text-left">
+                If you only wish to hide this student from active lists while preserving financial receipts for accounting audits, click <strong>Cancel</strong> and choose <strong>Archive</strong> instead.
+              </p>
+
+              <div className="space-y-1.5 pt-1 text-left">
+                <label className="text-[11px] font-semibold text-foreground block">
+                  To confirm permanent deletion, type <span className="font-mono font-bold text-rose-600 select-all">DELETE</span> below:
+                </label>
+                <Input
+                  value={deleteConfirmText}
+                  onChange={(e) => setDeleteConfirmText(e.target.value)}
+                  placeholder="Type DELETE here"
+                  className="h-9 text-xs border-rose-300 focus-visible:ring-rose-500 font-mono tracking-wider"
+                  autoFocus
+                />
+              </div>
+            </div>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2 sm:gap-0 pt-2">
+            <AlertDialogCancel
+              onClick={() => {
+                setDeleteTarget(null)
+                setDeleteConfirmText('')
+              }}
+              disabled={deleteMutation.isPending}
+              className="text-xs"
+            >
+              Cancel & Keep Student
+            </AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={deleteConfirmText.trim().toUpperCase() !== 'DELETE' || deleteMutation.isPending}
+              onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+              className="gap-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              {deleteMutation.isPending ? 'Deleting Student & Records...' : 'Permanently Delete Everything'}
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

@@ -264,16 +264,16 @@ export const BranchesPage: React.FC = () => {
             </div>
           ) : (
             <Table>
-              <TableHeader className="bg-muted/30">
-                <TableRow>
-                  <TableHead className="w-16">Logo</TableHead>
-                  <TableHead>Branch Name</TableHead>
-                  <TableHead>Code</TableHead>
-                  <TableHead>Contact Person</TableHead>
-                  <TableHead>Phone</TableHead>
-                  <TableHead>Address</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+              <TableHeader className="bg-[#28375C] text-white">
+                <TableRow className="border-b border-[#1b2640] hover:bg-[#28375C] bg-[#28375C]">
+                  <TableHead className="w-16 text-white font-semibold">Logo</TableHead>
+                  <TableHead className="text-white font-semibold">Branch Name</TableHead>
+                  <TableHead className="text-white font-semibold">Code</TableHead>
+                  <TableHead className="text-white font-semibold">Contact Person</TableHead>
+                  <TableHead className="text-white font-semibold">Phone</TableHead>
+                  <TableHead className="text-white font-semibold">Address</TableHead>
+                  <TableHead className="text-white font-semibold">Status</TableHead>
+                  <TableHead className="text-right text-white font-semibold pr-4">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

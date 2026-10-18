@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Building2, Calendar, Activity, CheckCircle2, AlertTriangle, Search, User, X } from 'lucide-react'
+import { Building2, Calendar, Activity, CheckCircle2, AlertTriangle, Search, User, X, PanelLeftClose, PanelLeftOpen, CreditCard, ShieldCheck, ShieldAlert, LogOut, Clock } from 'lucide-react'
 import { useApp } from '@/context/AppContext'
+import { useAuth } from '@/context/AuthContext'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import type { HealthCheckResponse } from '@sutawane/shared'
@@ -19,9 +20,10 @@ export const Header: React.FC = () => {
     branches,
     sessions,
     currentBranch,
-    settings,
-    activeLogoUrl,
+    isSidebarCollapsed,
+    toggleSidebar,
   } = useApp()
+  const { user, isDeveloper, license, logout } = useAuth()
 
   const { data: health, isSuccess, isError } = useQuery<HealthCheckResponse>({
     queryKey: ['health'],
@@ -34,30 +36,47 @@ export const Header: React.FC = () => {
   const [isSearchOpen, setIsSearchOpen] = useState(false)
   const searchContainerRef = useRef<HTMLDivElement>(null)
 
-  // Query students matching active branch filter
+  // Query students matching active branch and session filter
   const { data: students = [] } = useQuery<any[]>({
-    queryKey: ['header-quick-search-students', selectedBranchId],
+    queryKey: ['header-quick-search-students', selectedBranchId, selectedSessionId],
     queryFn: () =>
       api.get('/students', {
         branchId: selectedBranchId !== 'ALL' ? selectedBranchId : undefined,
+        sessionId: selectedSessionId !== 'ALL' && selectedSessionId ? selectedSessionId : undefined,
         isActive: 'true',
       }),
   })
 
-  // Filter matching suggestions
+  // Filter matching suggestions with multi-token matching
   const suggestions = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
     if (!q) return []
+    const terms = q.split(/\s+/).filter(Boolean)
     return students
       .filter((s) => {
-        return (
-          s.fullName?.toLowerCase().includes(q) ||
-          s.rollNumber?.toLowerCase().includes(q) ||
-          s.parentPhone?.includes(q) ||
-          (s.studentCode && s.studentCode.toLowerCase().includes(q))
-        )
+        const name = (s.fullName || '').toLowerCase()
+        const roll = (s.rollNumber || '').toLowerCase()
+        const phone = (s.parentPhone || '').replace(/\D/g, '')
+        const studentPhone = (s.studentPhone || '').replace(/\D/g, '')
+        const code = (s.studentCode || '').toLowerCase()
+        const standard = (s.standard || '').toLowerCase()
+        const branch = (s.branchName || '').toLowerCase()
+
+        return terms.every((term) => {
+          const cleanDigits = term.replace(/\D/g, '')
+          return (
+            name.includes(term) ||
+            roll.includes(term) ||
+            code.includes(term) ||
+            standard.includes(term) ||
+            branch.includes(term) ||
+            (cleanDigits && phone.includes(cleanDigits)) ||
+            (cleanDigits && studentPhone.includes(cleanDigits)) ||
+            s.parentPhone?.includes(term)
+          )
+        })
       })
-      .slice(0, 6)
+      .slice(0, 8)
   }, [students, searchQuery])
 
   // Click outside listener
@@ -72,32 +91,22 @@ export const Header: React.FC = () => {
   }, [])
 
   return (
-    <header className="h-16 flex-shrink-0 border-b bg-card px-6 flex items-center justify-between sticky top-0 z-30 shadow-xs gap-4">
-      {/* Brand title & Dynamic Active Logo */}
-      <div className="flex items-center gap-3 flex-shrink-0">
-        {activeLogoUrl ? (
-          <div className="w-9 h-9 rounded-lg bg-background border flex items-center justify-center overflow-hidden p-0.5 shadow-xs">
-            <img
-              src={activeLogoUrl}
-              alt="Logo"
-              className="w-full h-full object-contain"
-            />
-          </div>
-        ) : (
-          <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary font-bold text-sm">
-            SC
-          </div>
-        )}
-        <div className="hidden sm:block">
-          <h2 className="text-sm font-bold tracking-tight text-foreground leading-none">
-            {settings?.institute_name || 'Sutawane Classes'}
-          </h2>
-          <span className="text-[10px] text-muted-foreground font-medium block mt-0.5">
-            {selectedBranchId !== 'ALL' && currentBranch
-              ? `${currentBranch.name}`
-              : 'Coaching Management System'}
-          </span>
-        </div>
+    <header className="h-16 flex-shrink-0 border-b bg-card px-4 sm:px-6 flex items-center justify-between sticky top-0 z-30 shadow-xs gap-3">
+      {/* Sidebar Toggle Button */}
+      <div className="flex items-center flex-shrink-0">
+        <button
+          type="button"
+          onClick={toggleSidebar}
+          className="p-1.5 -ml-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors flex-shrink-0 focus:outline-none"
+          title={isSidebarCollapsed ? 'Expand navigation menu (Ctrl+B)' : 'Collapse navigation menu (Ctrl+B)'}
+          aria-label="Toggle navigation menu"
+        >
+          {isSidebarCollapsed ? (
+            <PanelLeftOpen className="w-4 h-4" />
+          ) : (
+            <PanelLeftClose className="w-4 h-4" />
+          )}
+        </button>
       </div>
 
       {/* Global Quick Search with Autocomplete */}
@@ -149,9 +158,9 @@ export const Header: React.FC = () => {
                 No students found in {selectedBranchId === 'ALL' ? 'All Branches' : currentBranch?.name || 'this branch'}.
               </div>
             ) : (
-              suggestions.map((s) => (
+              suggestions.map((s, idx) => (
                 <div
-                  key={s.id}
+                  key={`${s.id}-${s.admissionId || s.rollNumber || idx}`}
                   onMouseDown={() => {
                     navigate(`/students/${s.id}`)
                     setIsSearchOpen(false)
@@ -178,7 +187,7 @@ export const Header: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="flex-shrink-0">
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
                     {s.pendingFees > 0 ? (
                       <span className="text-[10px] text-rose-600 font-bold">
                         Due: {formatCurrency(s.pendingFees)}
@@ -186,6 +195,24 @@ export const Header: React.FC = () => {
                     ) : (
                       <span className="text-[10px] text-emerald-600 font-semibold">Cleared</span>
                     )}
+                    <button
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.stopPropagation()
+                        setIsSearchOpen(false)
+                        setSearchQuery('')
+                        navigate(
+                          `/fees/collect?studentId=${s.id}&admissionId=${s.admissionId || ''}&amount=${
+                            s.pendingFees > 0 ? s.pendingFees : ''
+                          }`
+                        )
+                      }}
+                      className="h-6 px-1.5 text-[10px] font-semibold rounded bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-1 shadow-sm"
+                      title={`Collect fees for ${s.fullName}`}
+                    >
+                      <CreditCard className="w-3 h-3" />
+                      Fee
+                    </button>
                   </div>
                 </div>
               ))
@@ -224,6 +251,7 @@ export const Header: React.FC = () => {
             onChange={(e) => setSelectedSessionId(e.target.value)}
             className="bg-transparent font-medium text-sm focus:outline-none cursor-pointer pr-1"
           >
+            <option value="ALL">All Academic Sessions (Consolidated)</option>
             {sessions
               .filter((s) => s.isActive)
               .map((s) => (
@@ -234,25 +262,53 @@ export const Header: React.FC = () => {
           </select>
         </div>
 
-        {/* System Health Indicator */}
-        <div className="hidden xl:flex items-center pl-2">
+        {/* Live Online Status: Green Blinking & Pulse Animation Beacon */}
+        <div className="flex items-center pl-1" title="System Online (Local Persistent SQLite Active)">
           {isSuccess && health?.status === 'healthy' ? (
-            <Badge variant="success" className="gap-1.5 py-1 px-2.5 font-normal">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-              <span>System Online</span>
-            </Badge>
+            <div className="flex items-center gap-1.5 py-1 px-2 rounded-full hover:bg-muted/50 transition-colors cursor-default">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+              </span>
+              <span className="text-xs font-semibold text-emerald-600 hidden sm:inline">Online</span>
+            </div>
           ) : isError ? (
-            <Badge variant="danger" className="gap-1.5 py-1 px-2.5 font-normal">
-              <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
-              <span>Offline</span>
-            </Badge>
+            <div className="flex items-center gap-1.5 py-1 px-2 rounded-full hover:bg-muted/50 cursor-default" title="System Offline">
+              <span className="h-2.5 w-2.5 rounded-full bg-rose-500 animate-pulse"></span>
+              <span className="text-xs font-semibold text-rose-600 hidden sm:inline">Offline</span>
+            </div>
           ) : (
-            <Badge variant="outline" className="gap-1.5 py-1 px-2.5 font-normal">
-              <Activity className="w-3.5 h-3.5 animate-spin" />
-              <span>Connecting...</span>
-            </Badge>
+            <div className="flex items-center gap-1.5 py-1 px-2" title="Connecting...">
+              <span className="h-3 w-3 rounded-full border-2 border-primary border-t-transparent animate-spin"></span>
+            </div>
           )}
         </div>
+
+        {/* User Role & Logout */}
+        {user && (
+          <div className="flex items-center gap-2 pl-2 border-l">
+            {isDeveloper ? (
+              <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs py-1 px-2.5 gap-1 hidden sm:flex">
+                <ShieldAlert className="w-3.5 h-3.5 text-blue-600" />
+                <span>Developer</span>
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs py-1 px-2.5 gap-1 hidden sm:flex">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Class Owner</span>
+              </Badge>
+            )}
+
+            <button
+              type="button"
+              onClick={() => logout()}
+              title={`Sign Out (@${user.username})`}
+              className="p-1.5 rounded-lg text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
+        )}
       </div>
     </header>
   )

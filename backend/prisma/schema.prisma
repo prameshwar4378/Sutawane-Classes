@@ -21,6 +21,25 @@ model HealthLog {
 }
 
 // -------------------------------------------------------------
+// Authentication & User Accounts (CLASS_OWNER & DEVELOPER)
+// -------------------------------------------------------------
+
+model User {
+  id        String   @id @default(uuid())
+  username  String   @unique
+  password  String   // Salted PBKDF2 hash
+  salt      String
+  name      String
+  role      String   // "CLASS_OWNER" | "DEVELOPER"
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([username])
+  @@index([role])
+}
+
+// -------------------------------------------------------------
 // Core Organizational Entities: Branches & Academic Sessions
 // -------------------------------------------------------------
 
@@ -55,6 +74,7 @@ model AcademicSession {
 
   admissions          StudentAdmission[]
   feePlans            FeePlan[]
+  payments            Payment[]
   originalDues        PreviousSessionDue[] @relation("OriginalSession")
   currentDues         PreviousSessionDue[] @relation("CurrentSession")
   receiptCounters     ReceiptCounter[]
@@ -96,10 +116,11 @@ model StudentAdmission {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  student Student         @relation(fields: [studentId], references: [id], onDelete: Restrict)
-  branch  Branch          @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  session AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
-  feePlan FeePlan?
+  student  Student         @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  branch   Branch          @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  session  AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  feePlan  FeePlan?
+  payments Payment[]
 
   @@unique([studentId, sessionId])
   @@unique([branchId, sessionId, rollNumber])
@@ -162,6 +183,9 @@ model Payment {
   id              String    @id @default(uuid())
   studentId       String
   branchId        String
+  admissionId     String?
+  sessionId       String?
+  previousDueId   String?
   receiptNumber   String    @unique // e.g. "SC/2026-27/NGP/REC-00001"
   totalAmount     Float
   paymentDate     DateTime  @default(now())
@@ -176,10 +200,16 @@ model Payment {
 
   student     Student             @relation(fields: [studentId], references: [id], onDelete: Restrict)
   branch      Branch              @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  admission   StudentAdmission?   @relation(fields: [admissionId], references: [id], onDelete: Restrict)
+  session     AcademicSession?    @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  previousDue PreviousSessionDue? @relation(fields: [previousDueId], references: [id], onDelete: Restrict)
   allocations PaymentAllocation[]
 
   @@index([studentId])
   @@index([branchId])
+  @@index([admissionId])
+  @@index([sessionId])
+  @@index([previousDueId])
   @@index([paymentDate])
 }
 
@@ -211,6 +241,7 @@ model PreviousSessionDue {
   student         Student         @relation(fields: [studentId], references: [id], onDelete: Restrict)
   originalSession AcademicSession @relation("OriginalSession", fields: [originalSessionId], references: [id], onDelete: Restrict)
   currentSession  AcademicSession @relation("CurrentSession", fields: [currentSessionId], references: [id], onDelete: Restrict)
+  payments        Payment[]
 
   @@index([studentId])
 }
@@ -274,4 +305,23 @@ model ExpenseAttachment {
   createdAt DateTime @default(now())
 
   expense Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+}
+
+// -------------------------------------------------------------
+// Dynamic Courses & Classes Management
+// -------------------------------------------------------------
+
+model Course {
+  id          String   @id @default(uuid())
+  name        String   @unique // e.g. "Class 8", "Class 10", "Class 11 Science", "MHT-CET / JEE Foundation"
+  code        String?  // Short code, e.g. "C10", "11-SCI"
+  description String?
+  defaultFee  Float?   @default(0)
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([name])
+  @@index([isActive])
 }

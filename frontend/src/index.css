@@ -90,3 +90,99 @@
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 }
+
+/* =========================================================
+   Universal A4 Print Styles & Document Isolation
+   ========================================================= */
+@page {
+  size: A4 portrait;
+  margin: 8mm 10mm;
+}
+
+@media print {
+  /* Reset layout constraints so document prints full-length */
+  html,
+  body,
+  #root {
+    height: auto !important;
+    min-height: auto !important;
+    overflow: visible !important;
+    background: white !important;
+    color: black !important;
+  }
+
+  /* Force background colors and crisp borders on all printers */
+  *,
+  *::before,
+  *::after {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
+  }
+
+  /* Hide app chrome, sidebars, buttons, toolbars, and scrollbars */
+  aside,
+  header,
+  nav,
+  button,
+  .no-print,
+  [data-radix-focus-guard],
+  [data-radix-portal] > div[style*="pointer-events"] {
+    display: none !important;
+  }
+
+  /* Dual-Copy Fee Receipt print isolation */
+  body.printing-receipt {
+    background: white !important;
+    color: black !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  body.printing-receipt #root,
+  body.printing-receipt aside,
+  body.printing-receipt header,
+  body.printing-receipt nav,
+  body.printing-receipt .no-print,
+  body.printing-receipt [data-radix-focus-guard],
+  body.printing-receipt [role="dialog"] > button,
+  body.printing-receipt div[data-state="open"][class*="fixed bg-black"] {
+    display: none !important;
+  }
+
+  body.printing-receipt [role="dialog"] {
+    position: static !important;
+    transform: none !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: white !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  body.printing-receipt #printable-receipt-container {
+    display: block !important;
+    visibility: visible !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: 194mm !important;
+    margin: 0 auto !important;
+    padding: 0 !important;
+    background: white !important;
+    color: black !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  /* Perforation line printing */
+  .receipt-cut-line {
+    border-top: 1.5px dashed #444 !important;
+    margin: 8px 0 !important;
+  }
+}
+

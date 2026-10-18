@@ -58,7 +58,7 @@ describe('Student Promotion to Next Academic Session', () => {
         studentId: student.id,
         branchId: branch!.id,
         sessionId: session2026.id,
-        rollNumber: `PROM-10-${Date.now().toString().slice(-3)}`,
+        rollNumber: `PROM-10-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
         standard: 'Class 10',
       },
     })
@@ -89,7 +89,7 @@ describe('Student Promotion to Next Academic Session', () => {
     expect(pendingDue).toBe(10000)
 
     // 3. Promote Prathamesh to 2027-28 (Class 11 Science)
-    const newRoll = `PROM-11-${Date.now().toString().slice(-3)}`
+    const newRoll = `PROM-11-${Date.now()}-${Math.floor(Math.random() * 10000)}`
     const newFees = 45000
 
     // Carry forward due record

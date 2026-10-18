@@ -23,6 +23,14 @@ export async function apiRequest<T = any>(
     ...(options.headers || {}),
   }
 
+  // Attach stored Auth Token if present
+  try {
+    const token = localStorage.getItem('sutawane_auth_token')
+    if (token && !(headers as Record<string, string>)['Authorization']) {
+      ;(headers as Record<string, string>)['Authorization'] = `Bearer ${token}`
+    }
+  } catch {}
+
   // If body is FormData, do not set Content-Type header
   if (options.body instanceof FormData) {
     delete (headers as Record<string, string>)['Content-Type']

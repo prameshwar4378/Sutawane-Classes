@@ -54,7 +54,7 @@ export function calculateInstallmentStatus(amountDue: number, amountPaid: number
   return 'UPCOMING'
 }
 
-// GET all students with search, standard, branch and session filters
+// GET all students with search, standard, branch and session universal filters
 studentRouter.get('/', async (req: Request, res: Response) => {
   try {
     const { branchId, sessionId, standard, search, isActive } = req.query
@@ -62,28 +62,36 @@ studentRouter.get('/', async (req: Request, res: Response) => {
     // Build admission filter
     const admissionWhere: any = {}
 
-    if (isActive !== 'ALL') {
-      admissionWhere.isActive = isActive === 'false' ? false : true
+    // Universal active filter
+    if (isActive && isActive !== 'ALL') {
+      admissionWhere.isActive = isActive === 'true'
     }
 
+    // Universal branch filter: blank or "ALL" means all branches
     if (branchId && branchId !== 'ALL') {
       admissionWhere.branchId = String(branchId)
     }
-    if (sessionId) {
+
+    // Universal session filter: blank or "ALL" means all sessions
+    if (sessionId && sessionId !== 'ALL') {
       admissionWhere.sessionId = String(sessionId)
     }
+
+    // Universal standard filter: blank or "ALL" means all standards
     if (standard && standard !== 'ALL') {
       admissionWhere.standard = String(standard)
     }
 
-    // Search query on student bio or roll number
+    // Search query on student bio, roll number, or course/standard
     if (search && String(search).trim()) {
       const q = String(search).trim()
       admissionWhere.OR = [
         { rollNumber: { contains: q } },
         { student: { fullName: { contains: q } } },
         { student: { parentPhone: { contains: q } } },
+        { student: { studentPhone: { contains: q } } },
         { student: { studentCode: { contains: q } } },
+        { standard: { contains: q } },
       ]
     }
 
@@ -92,22 +100,12 @@ studentRouter.get('/', async (req: Request, res: Response) => {
       include: {
         student: {
           include: {
-            payments: {
-              where: { isReversed: false },
-            },
             previousSessionDues: true,
             admissions: {
               include: {
-                feePlan: {
-                  include: {
-                    installments: {
-                      include: {
-                        allocations: {
-                          include: { payment: true },
-                        },
-                      },
-                    },
-                  },
+                feePlan: true,
+                payments: {
+                  where: { isReversed: false },
                 },
               },
             },
@@ -126,6 +124,10 @@ studentRouter.get('/', async (req: Request, res: Response) => {
             },
           },
         },
+        payments: {
+          where: { isReversed: false },
+          orderBy: { paymentDate: 'desc' },
+        },
       },
       orderBy: { createdAt: 'desc' },
     })
@@ -133,51 +135,35 @@ studentRouter.get('/', async (req: Request, res: Response) => {
     const summary = admissions.map((adm) => {
       const student = adm.student
       const feePlan = adm.feePlan
-      const totalFees = feePlan?.netPayable || feePlan?.totalFees || 0
+      const agreedFees = feePlan?.totalFees || 0
+      const totalDiscount = feePlan?.totalDiscount || 0
+      const totalFees = feePlan?.netPayable ?? feePlan?.totalFees ?? 0
 
-      // Paid fees specifically for this admission's installments
-      let paidFees = 0
-      if (feePlan?.installments && feePlan.installments.length > 0) {
-        for (const inst of feePlan.installments) {
-          for (const alloc of inst.allocations) {
-            if (!alloc.payment?.isReversed) {
-              paidFees += alloc.allocatedAmount
-            }
-          }
-        }
-      }
-      if (paidFees === 0 && student.payments.length > 0) {
-        // Fallback for direct payments
-        paidFees = student.payments
-          .filter((p) => p.branchId === adm.branchId)
-          .reduce((acc, p) => acc + p.totalAmount, 0)
-      }
-
+      // Paid fees strictly for this admission's session
+      const paidFees = (adm.payments || []).reduce((sum, p) => sum + p.totalAmount, 0)
       const pendingFees = Math.max(0, totalFees - paidFees)
 
-      // Calculate overall pending amount across all admissions and previous dues
+      // Sessions whose dues were carried forward to PreviousSessionDue
+      const carriedForwardSessionIds = new Set(
+        (student.previousSessionDues || []).map((pd) => pd.originalSessionId)
+      )
+
+      // Calculate overall pending amount across all admissions of this permanent student
       let allAdmissionsPending = 0
       for (const a of student.admissions) {
-        const aPlan = a.feePlan
-        const aTotal = aPlan?.netPayable || aPlan?.totalFees || 0
-        let aPaid = 0
-        if (aPlan?.installments && aPlan.installments.length > 0) {
-          for (const inst of aPlan.installments) {
-            for (const alloc of inst.allocations) {
-              if (!alloc.payment?.isReversed) {
-                aPaid += alloc.allocatedAmount
-              }
-            }
-          }
+        // Skip inactive/deactivated admissions so cancelled admissions do not skew active dues
+        if (!a.isActive) {
+          continue
         }
-        if (aPaid === 0 && student.payments.length > 0) {
-          aPaid = student.payments
-            .filter((p) => p.branchId === a.branchId)
-            .reduce((acc, p) => acc + p.totalAmount, 0)
+        if (carriedForwardSessionIds.has(a.sessionId)) {
+          continue
         }
+        const aTotal = a.feePlan?.netPayable ?? a.feePlan?.totalFees ?? 0
+        const aPaid = (a.payments || []).reduce((sum, p) => sum + p.totalAmount, 0)
         allAdmissionsPending += Math.max(0, aTotal - aPaid)
       }
 
+      // Uncollected previous session dues
       let prevDuesPending = 0
       if (student.previousSessionDues) {
         for (const pd of student.previousSessionDues) {
@@ -205,6 +191,8 @@ studentRouter.get('/', async (req: Request, res: Response) => {
         address: student.address,
         isActive: adm.isActive,
         admissionDate: adm.admissionDate.toISOString(),
+        agreedFees,
+        totalDiscount,
         totalFees,
         paidFees,
         pendingFees,
@@ -224,6 +212,7 @@ studentRouter.get('/', async (req: Request, res: Response) => {
 studentRouter.get('/:id', async (req: Request, res: Response) => {
   try {
     const id = String(req.params.id)
+    const { admissionId, sessionId } = req.query
 
     const student = await prisma.student.findUnique({
       where: { id },
@@ -247,11 +236,18 @@ studentRouter.get('/:id', async (req: Request, res: Response) => {
                 },
               },
             },
+            payments: {
+              where: { isReversed: false },
+              orderBy: { paymentDate: 'desc' },
+            },
           },
           orderBy: { createdAt: 'desc' },
         },
         payments: {
           include: {
+            branch: true,
+            session: true,
+            admission: true,
             allocations: {
               include: {
                 installment: true,
@@ -274,12 +270,24 @@ studentRouter.get('/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Student not found' })
     }
 
-    const currentAdmission = student.admissions[0] || null
+    // Resolve target admission: either specifically requested by admissionId, or matching sessionId, or first active, or latest
+    let currentAdmission = student.admissions[0] || null
+    if (admissionId) {
+      const match = student.admissions.find((a) => a.id === String(admissionId))
+      if (match) currentAdmission = match
+    } else if (sessionId && sessionId !== 'ALL') {
+      const match = student.admissions.find((a) => a.sessionId === String(sessionId) && a.isActive)
+        || student.admissions.find((a) => a.sessionId === String(sessionId))
+      if (match) currentAdmission = match
+    } else {
+      const active = student.admissions.find((a) => a.isActive)
+      if (active) currentAdmission = active
+    }
+
     const feePlan = currentAdmission?.feePlan || null
 
-    // Compute installments with status
+    // Compute installments with status for selected admission
     const installmentsWithStatus = feePlan?.installments.map((inst) => {
-      // Sum non-reversed allocations
       const paid = inst.allocations.reduce((sum, alloc) => {
         return alloc.payment.isReversed ? sum : sum + alloc.allocatedAmount
       }, 0)
@@ -302,11 +310,37 @@ studentRouter.get('/:id', async (req: Request, res: Response) => {
     const totalDiscount = feePlan?.totalDiscount || 0
     const netPayable = feePlan?.netPayable || totalFees - totalDiscount
 
-    const totalPaid = student.payments.reduce((acc, p) => {
-      return p.isReversed ? acc : acc + p.totalAmount
-    }, 0)
-
+    // Authoritative session paid fees: only payments for this admission
+    const sessionPayments = currentAdmission?.payments || []
+    const totalPaid = sessionPayments.reduce((acc, p) => acc + p.totalAmount, 0)
     const totalPending = Math.max(0, netPayable - totalPaid)
+
+    // Uncollected previous session dues
+    const previousDuesPending = (student.previousSessionDues || []).reduce(
+      (sum, d) => sum + Math.max(0, d.outstandingAmount - d.collectedAmount),
+      0
+    )
+
+    // Sessions whose dues were carried forward to PreviousSessionDue
+    const carriedForwardSessionIds = new Set(
+      (student.previousSessionDues || []).map((pd) => pd.originalSessionId)
+    )
+
+    // Overall pending across all admissions (strictly active admissions)
+    let allAdmissionsPending = 0
+    for (const a of student.admissions) {
+      // Skip inactive/deactivated admissions
+      if (!a.isActive) {
+        continue
+      }
+      if (carriedForwardSessionIds.has(a.sessionId)) {
+        continue
+      }
+      const aNet = a.feePlan?.netPayable ?? a.feePlan?.totalFees ?? 0
+      const aPaid = (a.payments || []).reduce((sum, p) => sum + p.totalAmount, 0)
+      allAdmissionsPending += Math.max(0, aNet - aPaid)
+    }
+    const overallPendingAmount = allAdmissionsPending + previousDuesPending
 
     res.json({
       id: student.id,
@@ -335,7 +369,11 @@ studentRouter.get('/:id', async (req: Request, res: Response) => {
         netPayable,
         totalPaid,
         totalPending,
+        previousDuesPending,
+        overallPendingAmount,
       },
+      previousDuesPending,
+      overallPendingAmount,
       installments: installmentsWithStatus,
       payments: student.payments.map((p) => ({
         id: p.id,
@@ -348,21 +386,36 @@ studentRouter.get('/:id', async (req: Request, res: Response) => {
         isReversed: p.isReversed,
         reversalReason: p.reversalReason,
         reversedAt: p.reversedAt ? p.reversedAt.toISOString() : null,
+        sessionName: p.session?.name,
+        branchName: p.branch?.name,
+        standard: p.admission?.standard,
         allocations: p.allocations.map((a) => ({
           id: a.id,
           allocatedAmount: a.allocatedAmount,
           installmentLabel: a.installment.label,
         })),
       })),
-      allAdmissions: student.admissions.map((a) => ({
-        id: a.id,
-        rollNumber: a.rollNumber,
-        standard: a.standard,
-        branchName: a.branch.name,
-        sessionName: a.session.name,
-        isActive: a.isActive,
-        admissionDate: a.admissionDate.toISOString(),
-      })),
+      allAdmissions: student.admissions.map((a) => {
+        const aNet = a.feePlan?.netPayable ?? a.feePlan?.totalFees ?? 0
+        const aPaid = (a.payments || []).reduce((s, p) => s + p.totalAmount, 0)
+        return {
+          id: a.id,
+          rollNumber: a.rollNumber,
+          standard: a.standard,
+          branchName: a.branch.name,
+          branchId: a.branchId,
+          sessionName: a.session.name,
+          sessionId: a.sessionId,
+          isActive: a.isActive,
+          admissionDate: a.admissionDate.toISOString(),
+          totalFees: a.feePlan?.totalFees || 0,
+          totalDiscount: a.feePlan?.totalDiscount || 0,
+          agreedFees: aNet,
+          netPayable: aNet,
+          paidFees: aPaid,
+          pendingFees: Math.max(0, aNet - aPaid),
+        }
+      }),
       previousSessionDues: student.previousSessionDues.map((d) => ({
         id: d.id,
         outstandingAmount: d.outstandingAmount,
@@ -401,26 +454,38 @@ studentRouter.post('/', async (req: Request, res: Response) => {
 
     // Resolve branch
     let targetBranchId = branchId
-    if (!targetBranchId) {
+    if (!targetBranchId || targetBranchId === 'ALL') {
       const defaultBranch = await prisma.branch.findFirst({ where: { isActive: true } })
       targetBranchId = defaultBranch?.id
     }
-    if (!targetBranchId) {
-      return res.status(400).json({ error: 'No active branch available' })
+    // Verify branch actually exists in DB
+    let branchRecord = targetBranchId ? await prisma.branch.findUnique({ where: { id: targetBranchId } }) : null
+    if (!branchRecord) {
+      const defaultBranch = await prisma.branch.findFirst({ where: { isActive: true } })
+      if (!defaultBranch) {
+        return res.status(400).json({ error: 'No active branch available' })
+      }
+      targetBranchId = defaultBranch.id
     }
 
     // Resolve session
     let targetSessionId = sessionId
-    if (!targetSessionId) {
+    if (!targetSessionId || targetSessionId === 'ALL') {
       const currentSession = await prisma.academicSession.findFirst({ where: { isCurrent: true } })
       targetSessionId = currentSession?.id
     }
-    if (!targetSessionId) {
+    if (!targetSessionId || targetSessionId === 'ALL') {
       const fallbackSession = await prisma.academicSession.findFirst()
       targetSessionId = fallbackSession?.id
     }
-    if (!targetSessionId) {
-      return res.status(400).json({ error: 'No academic session available' })
+    // Verify session actually exists in DB
+    let sessionRecord = targetSessionId ? await prisma.academicSession.findUnique({ where: { id: targetSessionId } }) : null
+    if (!sessionRecord) {
+      const currentSession = (await prisma.academicSession.findFirst({ where: { isCurrent: true } })) || (await prisma.academicSession.findFirst())
+      if (!currentSession) {
+        return res.status(400).json({ error: 'No academic session available' })
+      }
+      targetSessionId = currentSession.id
     }
 
     // Check roll number uniqueness within this branch + session
@@ -472,7 +537,7 @@ studentRouter.post('/', async (req: Request, res: Response) => {
 
       const now = new Date()
 
-      // If custom installments provided, use them; otherwise auto-generate 3 installments
+      // If custom installments provided, use them; otherwise create 1 flexible open installment
       if (Array.isArray(customInstallments) && customInstallments.length > 0) {
         await tx.installment.createMany({
           data: customInstallments.map((inst: any, idx: number) => ({
@@ -484,35 +549,15 @@ studentRouter.post('/', async (req: Request, res: Response) => {
           })),
         })
       } else {
-        // Auto-generate 3 installments: 40% admission, 30% month 2, 30% month 3
-        const inst1Amount = Math.round(feesNumber * 0.4)
-        const inst2Amount = Math.round(feesNumber * 0.3)
-        const inst3Amount = feesNumber - (inst1Amount + inst2Amount)
-
-        await tx.installment.createMany({
-          data: [
-            {
-              feePlanId: feePlan.id,
-              installmentNo: 1,
-              label: 'Installment 1 (Admission)',
-              dueDate: now,
-              amountDue: inst1Amount,
-            },
-            {
-              feePlanId: feePlan.id,
-              installmentNo: 2,
-              label: 'Installment 2',
-              dueDate: new Date(now.getTime() + 45 * 24 * 3600 * 1000),
-              amountDue: inst2Amount,
-            },
-            {
-              feePlanId: feePlan.id,
-              installmentNo: 3,
-              label: 'Installment 3 (Final)',
-              dueDate: new Date(now.getTime() + 90 * 24 * 3600 * 1000),
-              amountDue: inst3Amount,
-            },
-          ],
+        // Create 1 open flexible milestone for the session fee
+        await tx.installment.create({
+          data: {
+            feePlanId: feePlan.id,
+            installmentNo: 1,
+            label: 'Session Fee',
+            dueDate: now,
+            amountDue: feesNumber,
+          },
         })
       }
 
@@ -520,8 +565,9 @@ studentRouter.post('/', async (req: Request, res: Response) => {
     })
 
     res.status(201).json(result)
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to admit student', details: String(error) })
+  } catch (error: any) {
+    console.error('[Student Admission Error]:', error)
+    res.status(500).json({ error: error.message || 'Failed to admit student', details: String(error) })
   }
 })
 
@@ -701,6 +747,109 @@ studentRouter.delete('/:id/photo', async (req: Request, res: Response) => {
   }
 })
 
+// DELETE permanently remove student and all associated records (admissions, fee plans, installments, payments)
+studentRouter.delete('/:id', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id)
+
+    const student = await prisma.student.findUnique({
+      where: { id },
+      include: {
+        admissions: {
+          include: {
+            feePlan: true,
+          },
+        },
+        payments: true,
+        previousSessionDues: true,
+      },
+    })
+
+    if (!student) {
+      return res.status(404).json({ error: 'Student not found' })
+    }
+
+    const paymentIds = student.payments.map((p) => p.id)
+    const admissionIds = student.admissions.map((a) => a.id)
+    const feePlanIds = student.admissions
+      .map((a) => a.feePlan?.id)
+      .filter(Boolean) as string[]
+    const dueIds = student.previousSessionDues.map((d) => d.id)
+
+    // Execute atomic cascading deletion inside a transaction
+    await prisma.$transaction(async (tx) => {
+      // 1. Delete payment allocations for all payments associated with this student
+      if (paymentIds.length > 0) {
+        await tx.paymentAllocation.deleteMany({
+          where: { paymentId: { in: paymentIds } },
+        })
+      }
+
+      // 2. Delete all payment records for this student
+      await tx.payment.deleteMany({
+        where: { studentId: id },
+      })
+
+      // 3. Delete installments, discounts, and fee plans for this student's admissions
+      if (feePlanIds.length > 0) {
+        await tx.installment.deleteMany({
+          where: { feePlanId: { in: feePlanIds } },
+        })
+        await tx.feeDiscount.deleteMany({
+          where: { feePlanId: { in: feePlanIds } },
+        })
+        await tx.feePlan.deleteMany({
+          where: { id: { in: feePlanIds } },
+        })
+      }
+
+      // 4. Delete all admissions for this student
+      if (admissionIds.length > 0) {
+        await tx.studentAdmission.deleteMany({
+          where: { studentId: id },
+        })
+      }
+
+      // 5. Delete all previous session dues for this student
+      if (dueIds.length > 0) {
+        await tx.previousSessionDue.deleteMany({
+          where: { studentId: id },
+        })
+      }
+
+      // 6. Delete the student profile
+      await tx.student.delete({
+        where: { id },
+      })
+    })
+
+    // Clean up physical photo file if exists on disk
+    if (student.photoUrl) {
+      const oldFileName = path.basename(student.photoUrl)
+      const oldFilePath = path.join(storagePaths.photosDir, oldFileName)
+      if (fs.existsSync(oldFilePath)) {
+        try {
+          fs.unlinkSync(oldFilePath)
+        } catch {
+          // ignore unlink error
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Student "${student.fullName}" and all associated fee records deleted permanently.`,
+      deletedStudent: {
+        id: student.id,
+        fullName: student.fullName,
+        studentCode: student.studentCode,
+      },
+    })
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete student and linked records', details: String(error) })
+  }
+})
+
 // POST record fee payment with FIFO installment allocation
 studentRouter.post('/payments', async (req: Request, res: Response) => {
   try {
@@ -803,30 +952,29 @@ studentRouter.post('/payments', async (req: Request, res: Response) => {
   }
 })
 
-// GET financial statistics (backend calculation)
+// GET financial statistics with universal filters (backend authoritative calculation)
 studentRouter.get('/stats/financial', async (req: Request, res: Response) => {
   try {
-    const { branchId, sessionId } = req.query
+    const { branchId, sessionId, standard } = req.query
 
     const admissionWhere: any = { isActive: true }
     if (branchId && branchId !== 'ALL') {
       admissionWhere.branchId = String(branchId)
     }
-    if (sessionId) {
+    if (sessionId && sessionId !== 'ALL') {
       admissionWhere.sessionId = String(sessionId)
+    }
+    if (standard && standard !== 'ALL') {
+      admissionWhere.standard = String(standard)
     }
 
     const admissions = await prisma.studentAdmission.findMany({
       where: admissionWhere,
       include: {
-        student: {
-          include: {
-            payments: {
-              where: { isReversed: false },
-            },
-          },
-        },
         feePlan: true,
+        payments: {
+          where: { isReversed: false },
+        },
       },
     })
 
@@ -834,10 +982,10 @@ studentRouter.get('/stats/financial', async (req: Request, res: Response) => {
     let totalCollectedFees = 0
 
     for (const adm of admissions) {
-      const planFees = adm.feePlan?.netPayable || adm.feePlan?.totalFees || 0
+      const planFees = adm.feePlan?.netPayable ?? adm.feePlan?.totalFees ?? 0
       totalExpectedFees += planFees
 
-      const paid = adm.student.payments.reduce((acc, p) => acc + p.totalAmount, 0)
+      const paid = (adm.payments || []).reduce((acc, p) => acc + p.totalAmount, 0)
       totalCollectedFees += paid
     }
 
@@ -882,11 +1030,11 @@ studentRouter.get('/:id/promotion-preview', async (req: Request, res: Response) 
             branch: true,
             session: true,
             feePlan: true,
+            payments: {
+              where: { isReversed: false },
+            },
           },
           orderBy: { createdAt: 'desc' },
-        },
-        payments: {
-          where: { isReversed: false },
         },
       },
     })
@@ -898,7 +1046,7 @@ studentRouter.get('/:id/promotion-preview', async (req: Request, res: Response) 
     const currentAdmission = student.admissions[0]
     const currentFeePlan = currentAdmission.feePlan
     const totalFees = currentFeePlan?.netPayable || currentFeePlan?.totalFees || 0
-    const totalPaid = student.payments.reduce((acc, p) => acc + p.totalAmount, 0)
+    const totalPaid = (currentAdmission.payments || []).reduce((acc, p) => acc + p.totalAmount, 0)
     const currentPendingDue = Math.max(0, totalFees - totalPaid)
 
     const suggestedStandard = suggestNextStandard(currentAdmission.standard)
@@ -960,11 +1108,11 @@ studentRouter.post('/:id/promote', async (req: Request, res: Response) => {
             session: true,
             branch: true,
             feePlan: true,
+            payments: {
+              where: { isReversed: false },
+            },
           },
           orderBy: { createdAt: 'desc' },
-        },
-        payments: {
-          where: { isReversed: false },
         },
       },
     })
@@ -1003,9 +1151,9 @@ studentRouter.post('/:id/promote', async (req: Request, res: Response) => {
       })
     }
 
-    // Calculate pending dues from previous session
+    // Calculate pending dues strictly from previous session
     const prevPlanFees = previousAdmission.feePlan?.netPayable || previousAdmission.feePlan?.totalFees || 0
-    const prevPaid = student.payments.reduce((sum, p) => sum + p.totalAmount, 0)
+    const prevPaid = (previousAdmission.payments || []).reduce((sum, p) => sum + p.totalAmount, 0)
     const prevPendingDue = Math.max(0, prevPlanFees - prevPaid)
 
     const numFees = Number(newTotalFees) || 0
@@ -1013,19 +1161,29 @@ studentRouter.post('/:id/promote', async (req: Request, res: Response) => {
     // Transaction to create new admission, fee plan, and previous session due record
     const result = await prisma.$transaction(async (tx) => {
       // 1. If previous dues exist and carry forward is enabled, record PreviousSessionDue
+      // Check for duplicate to prevent carrying forward the same balance multiple times
       let dueRecord = null
       if (carryForwardDue && prevPendingDue > 0) {
-        dueRecord = await tx.previousSessionDue.create({
-          data: {
+        const existingDue = await tx.previousSessionDue.findFirst({
+          where: {
             studentId: id,
             originalSessionId: previousAdmission.sessionId,
             currentSessionId: targetSessionId,
-            outstandingAmount: prevPendingDue,
-            description:
-              dueNotes ||
-              `Outstanding fee balance carried forward from ${previousAdmission.session.name} (${previousAdmission.standard})`,
           },
         })
+        if (!existingDue) {
+          dueRecord = await tx.previousSessionDue.create({
+            data: {
+              studentId: id,
+              originalSessionId: previousAdmission.sessionId,
+              currentSessionId: targetSessionId,
+              outstandingAmount: prevPendingDue,
+              description:
+                dueNotes ||
+                `Outstanding fee balance carried forward from ${previousAdmission.session.name} (${previousAdmission.standard})`,
+            },
+          })
+        }
       }
 
       // 2. Create new StudentAdmission in target session
@@ -1045,7 +1203,7 @@ studentRouter.post('/:id/promote', async (req: Request, res: Response) => {
         },
       })
 
-      // 3. Create fresh FeePlan for target session
+      // 3. Create fresh FeePlan for target session (never polluted with previous session dues)
       const newFeePlan = await tx.feePlan.create({
         data: {
           admissionId: newAdmission.id,
@@ -1056,36 +1214,16 @@ studentRouter.post('/:id/promote', async (req: Request, res: Response) => {
         },
       })
 
-      // 4. Create standard 3 installments for new session
+      // 4. Create flexible open installment for new session
       const now = new Date()
-      const inst1 = Math.round(numFees * 0.4)
-      const inst2 = Math.round(numFees * 0.3)
-      const inst3 = numFees - (inst1 + inst2)
-
-      await tx.installment.createMany({
-        data: [
-          {
-            feePlanId: newFeePlan.id,
-            installmentNo: 1,
-            label: 'Installment 1 (Session Admission)',
-            dueDate: now,
-            amountDue: inst1,
-          },
-          {
-            feePlanId: newFeePlan.id,
-            installmentNo: 2,
-            label: 'Installment 2',
-            dueDate: new Date(now.getTime() + 45 * 24 * 3600 * 1000),
-            amountDue: inst2,
-          },
-          {
-            feePlanId: newFeePlan.id,
-            installmentNo: 3,
-            label: 'Installment 3 (Final)',
-            dueDate: new Date(now.getTime() + 90 * 24 * 3600 * 1000),
-            amountDue: inst3,
-          },
-        ],
+      await tx.installment.create({
+        data: {
+          feePlanId: newFeePlan.id,
+          installmentNo: 1,
+          label: 'Session Fee',
+          dueDate: now,
+          amountDue: numFees,
+        },
       })
 
       return {
@@ -1133,10 +1271,13 @@ studentRouter.post('/batch-promote', async (req: Request, res: Response) => {
         where: { id: sId },
         include: {
           admissions: {
-            include: { session: true, feePlan: true },
+            include: {
+              session: true,
+              feePlan: true,
+              payments: { where: { isReversed: false } },
+            },
             orderBy: { createdAt: 'desc' },
           },
-          payments: { where: { isReversed: false } },
         },
       })
 
@@ -1169,23 +1310,32 @@ studentRouter.post('/batch-promote', async (req: Request, res: Response) => {
         newRoll = `${baseRoll}-${Date.now().toString().slice(-3)}`
       }
 
-      // Calculate dues
+      // Calculate dues strictly from previous session
       const prevFees = prevAdm.feePlan?.netPayable || prevAdm.feePlan?.totalFees || 0
-      const prevPaid = student.payments.reduce((sum, p) => sum + p.totalAmount, 0)
+      const prevPaid = (prevAdm.payments || []).reduce((sum, p) => sum + p.totalAmount, 0)
       const prevPendingDue = Math.max(0, prevFees - prevPaid)
 
       // Promote in transaction
       await prisma.$transaction(async (tx) => {
         if (carryForwardDues && prevPendingDue > 0) {
-          await tx.previousSessionDue.create({
-            data: {
+          const existingDue = await tx.previousSessionDue.findFirst({
+            where: {
               studentId: sId,
               originalSessionId: prevAdm.sessionId,
               currentSessionId: targetSessionId,
-              outstandingAmount: prevPendingDue,
-              description: `Batch carry forward balance from ${prevAdm.session.name}`,
             },
           })
+          if (!existingDue) {
+            await tx.previousSessionDue.create({
+              data: {
+                studentId: sId,
+                originalSessionId: prevAdm.sessionId,
+                currentSessionId: targetSessionId,
+                outstandingAmount: prevPendingDue,
+                description: `Batch carry forward balance from ${prevAdm.session.name}`,
+              },
+            })
+          }
         }
 
         const newAdm = await tx.studentAdmission.create({
@@ -1211,34 +1361,14 @@ studentRouter.post('/batch-promote', async (req: Request, res: Response) => {
         })
 
         const now = new Date()
-        const inst1 = Math.round(numFees * 0.4)
-        const inst2 = Math.round(numFees * 0.3)
-        const inst3 = numFees - (inst1 + inst2)
-
-        await tx.installment.createMany({
-          data: [
-            {
-              feePlanId: newPlan.id,
-              installmentNo: 1,
-              label: 'Installment 1',
-              dueDate: now,
-              amountDue: inst1,
-            },
-            {
-              feePlanId: newPlan.id,
-              installmentNo: 2,
-              label: 'Installment 2',
-              dueDate: new Date(now.getTime() + 45 * 24 * 3600 * 1000),
-              amountDue: inst2,
-            },
-            {
-              feePlanId: newPlan.id,
-              installmentNo: 3,
-              label: 'Installment 3',
-              dueDate: new Date(now.getTime() + 90 * 24 * 3600 * 1000),
-              amountDue: inst3,
-            },
-          ],
+        await tx.installment.create({
+          data: {
+            feePlanId: newPlan.id,
+            installmentNo: 1,
+            label: 'Session Fee',
+            dueDate: now,
+            amountDue: numFees,
+          },
         })
       })
 

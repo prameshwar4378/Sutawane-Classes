@@ -28,6 +28,9 @@ import {
   TrendingUp,
   Activity,
   CheckCircle2,
+  Clock,
+  RotateCcw,
+  ArrowRight,
 } from 'lucide-react'
 import {
   BarChart,
@@ -40,6 +43,61 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 import { formatCurrency, formatDate, formatDateLong } from '@/lib/utils'
+
+const formatRelativeActivityTime = (actionTimeStr?: string, fallbackDateStr?: string) => {
+  const timeSource = actionTimeStr || fallbackDateStr
+  if (!timeSource) return ''
+
+  const date = new Date(timeSource)
+  if (isNaN(date.getTime())) return ''
+
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffSec = Math.floor(diffMs / 1000)
+  const diffMin = Math.floor(diffSec / 60)
+
+  // Format time portion like "02:30 PM"
+  const timeFormatted = date.toLocaleTimeString('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  })
+
+  // Check if today
+  const isToday =
+    date.getDate() === now.getDate() &&
+    date.getMonth() === now.getMonth() &&
+    date.getFullYear() === now.getFullYear()
+
+  // If time is exact midnight 00:00:00 (legacy date-only string)
+  const isDateOnly = date.getHours() === 0 && date.getMinutes() === 0 && date.getSeconds() === 0
+
+  if (diffSec >= 0 && diffSec < 60) {
+    return 'Just now'
+  }
+
+  if (diffMin >= 1 && diffMin < 60) {
+    return `${diffMin}m ago (${timeFormatted})`
+  }
+
+  if (isToday) {
+    return isDateOnly ? 'Today' : `Today at ${timeFormatted}`
+  }
+
+  // Check if yesterday
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  const isYesterday =
+    date.getDate() === yesterday.getDate() &&
+    date.getMonth() === yesterday.getMonth() &&
+    date.getFullYear() === yesterday.getFullYear()
+
+  if (isYesterday) {
+    return isDateOnly ? 'Yesterday' : `Yesterday at ${timeFormatted}`
+  }
+
+  return isDateOnly ? formatDate(timeSource) : `${formatDate(timeSource)} • ${timeFormatted}`
+}
 
 export const DashboardPage: React.FC = () => {
   const navigate = useNavigate()
@@ -74,7 +132,13 @@ export const DashboardPage: React.FC = () => {
           </h1>
           <p className="text-xs text-muted-foreground mt-0.5">
             Active Scope: <strong className="text-foreground">{currentBranch ? currentBranch.name : 'All Branches Consolidated'}</strong> | Academic Session:{' '}
-            <strong className="text-foreground">{currentSession ? currentSession.displayName || currentSession.name : '2026–27'}</strong>
+            <strong className="text-foreground">
+              {currentSession
+                ? currentSession.displayName || currentSession.name
+                : selectedSessionId === 'ALL'
+                ? 'All Academic Sessions Consolidated'
+                : '2026–27'}
+            </strong>
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -162,11 +226,11 @@ export const DashboardPage: React.FC = () => {
           </CardContent>
         </Card>
 
-        {/* Overdue Installments */}
+        {/* Overdue Fee Dues */}
         <Card className="border-amber-200 bg-amber-50/20 dark:bg-amber-950/20">
           <CardHeader className="flex flex-row items-center justify-between pb-1 py-3">
             <CardTitle className="text-xs font-semibold uppercase tracking-wider text-amber-800 dark:text-amber-300">
-              Overdue Installments
+              Overdue Fee Dues
             </CardTitle>
             <div className="p-1.5 rounded-md bg-amber-100 text-amber-700 dark:bg-amber-900/60 dark:text-amber-300">
               <ClockAlert className="w-4 h-4" />
@@ -177,7 +241,7 @@ export const DashboardPage: React.FC = () => {
               {isLoading ? '...' : formatCurrency(dues?.overdueAmount || 0)}
             </div>
             <p className="text-[11px] text-muted-foreground mt-0.5">
-              {dues?.overdueCount || 0} installments past due date
+              {dues?.overdueCount || 0} student accounts overdue
             </p>
           </CardContent>
         </Card>
@@ -231,7 +295,7 @@ export const DashboardPage: React.FC = () => {
               {isLoading ? '...' : formatCurrency(sessionStats?.totalPendingFees || 0)}
             </div>
             <p className="text-[10px] text-muted-foreground mt-0.5">
-              Pending installment balances
+              Unpaid student fee balances
             </p>
           </CardContent>
         </Card>
@@ -314,52 +378,140 @@ export const DashboardPage: React.FC = () => {
         </Card>
 
         {/* Live Recent Transactions Feed (1 col) */}
-        <Card>
-          <CardHeader className="py-4">
-            <CardTitle className="text-base font-semibold flex items-center justify-between">
-              <span>Recent Activity Feed</span>
-              <Activity className="w-4 h-4 text-primary" />
+        <Card className="flex flex-col">
+          <CardHeader className="py-3 px-4 border-b">
+            <CardTitle className="text-sm font-bold flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+                <span>Recent Activity Feed</span>
+              </div>
+              <Badge variant="outline" className="text-[10px] font-normal text-muted-foreground gap-1 px-1.5 py-0.5">
+                <Activity className="w-3 h-3 text-emerald-600" />
+                Live Feed
+              </Badge>
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="p-3 flex-1 flex flex-col justify-between">
             {recentTransactions.length === 0 ? (
-              <div className="py-12 text-center text-xs text-muted-foreground border rounded-lg border-dashed">
+              <div className="py-14 text-center text-xs text-muted-foreground border rounded-xl border-dashed">
+                <Activity className="w-6 h-6 mx-auto mb-2 text-muted-foreground/40" />
                 No recent activity recorded yet
               </div>
             ) : (
-              <div className="space-y-2.5">
-                {recentTransactions.map((tx: any) => (
-                  <div
-                    key={tx.id}
-                    className="p-2.5 border rounded-lg bg-card hover:bg-muted/30 transition-colors flex items-center justify-between text-xs"
-                  >
-                    <div className="space-y-0.5 max-w-[65%]">
-                      <div className="font-semibold text-foreground truncate">{tx.title}</div>
-                      <div className="text-[11px] text-muted-foreground truncate">{tx.subtitle}</div>
-                      <div className="text-[10px] text-muted-foreground/80">
-                        {tx.branchName} • {formatDate(tx.date)}
+              <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
+                {recentTransactions.map((tx: any) => {
+                  const isRev = tx.type === 'FEE_REVERSAL'
+                  const isInc = tx.isIncome && !isRev
+                  const displayTime = formatRelativeActivityTime(tx.actionTime || tx.createdAt, tx.date)
+
+                  return (
+                    <div
+                      key={tx.id}
+                      onClick={() => {
+                        if (tx.studentId) navigate(`/students/${tx.studentId}`)
+                        else if (tx.type === 'EXPENSE') navigate('/expenses')
+                      }}
+                      className="p-2 border rounded-xl bg-card hover:bg-muted/40 transition-all cursor-pointer flex items-center justify-between gap-2 text-xs shadow-xs hover:border-primary/40 group"
+                      title={tx.studentId ? 'Click to view student fee ledger' : tx.type === 'EXPENSE' ? 'Click to view expense records' : undefined}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                        {/* Type Icon Badge */}
+                        <div
+                          className={`p-2 rounded-lg shrink-0 flex items-center justify-center ${
+                            isRev
+                              ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300'
+                              : isInc
+                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+                              : 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300'
+                          }`}
+                        >
+                          {isRev ? (
+                            <RotateCcw className="w-3.5 h-3.5" />
+                          ) : isInc ? (
+                            <CreditCard className="w-3.5 h-3.5" />
+                          ) : (
+                            <Receipt className="w-3.5 h-3.5" />
+                          )}
+                        </div>
+
+                        {/* Details */}
+                        <div className="space-y-0.5 min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-semibold text-foreground truncate group-hover:text-primary transition-colors">
+                              {tx.title}
+                            </span>
+                            {tx.paymentMode && (
+                              <span className="text-[9px] px-1 py-0 rounded font-mono font-medium bg-muted text-muted-foreground border">
+                                {tx.paymentMode}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[11px] text-muted-foreground truncate">{tx.subtitle}</div>
+                          <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/80 pt-0.5">
+                            <Clock className="w-3 h-3 text-muted-foreground/60 shrink-0" />
+                            <span className="font-medium text-foreground/75">{displayTime}</span>
+                            <span>•</span>
+                            <span className="truncate">{tx.branchName}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Amount & Status Badge */}
+                      <div className="text-right shrink-0">
+                        <div
+                          className={`font-bold text-xs ${
+                            isRev
+                              ? 'text-amber-600 line-through'
+                              : isInc
+                              ? 'text-emerald-600'
+                              : 'text-rose-600'
+                          }`}
+                        >
+                          {isRev ? '−' : isInc ? '+' : '−'}
+                          {formatCurrency(tx.amount)}
+                        </div>
+                        <Badge
+                          variant={isRev ? 'outline' : isInc ? 'success' : 'outline'}
+                          className={`text-[9px] px-1.5 py-0 mt-0.5 ${
+                            isRev
+                              ? 'bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950 dark:text-amber-300'
+                              : isInc
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300'
+                              : 'bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950 dark:text-rose-300'
+                          }`}
+                        >
+                          {isRev ? 'Reversed' : isInc ? 'Fee Collection' : 'Expense'}
+                        </Badge>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <div
-                        className={`font-bold ${
-                          tx.isIncome ? 'text-emerald-600' : 'text-rose-600'
-                        }`}
-                      >
-                        {tx.isIncome ? '+' : '-'}
-                        {formatCurrency(tx.amount)}
-                      </div>
-                      <Badge
-                        variant={tx.isIncome ? 'success' : 'outline'}
-                        className="text-[9px] px-1 py-0 mt-0.5"
-                      >
-                        {tx.isIncome ? 'Collection' : 'Expense'}
-                      </Badge>
-                    </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
+
+            {/* Quick Links Footer */}
+            <div className="pt-2.5 mt-2 flex items-center justify-between text-[11px] text-muted-foreground border-t">
+              <span>Showing latest {recentTransactions.length} actions</span>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => navigate('/fees/collect')}
+                  className="text-primary hover:underline font-medium inline-flex items-center gap-0.5 cursor-pointer"
+                >
+                  Collect Fee <ArrowRight className="w-3 h-3" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigate('/expenses')}
+                  className="text-primary hover:underline font-medium inline-flex items-center gap-0.5 cursor-pointer"
+                >
+                  Expenses <ArrowRight className="w-3 h-3" />
+                </button>
+              </div>
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -377,15 +529,15 @@ export const DashboardPage: React.FC = () => {
           </CardHeader>
           <CardContent>
             <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Branch Center</TableHead>
-                  <TableHead>Code</TableHead>
-                  <TableHead>Active Students</TableHead>
-                  <TableHead>Total Fee Collections</TableHead>
-                  <TableHead>Operating Expenses</TableHead>
-                  <TableHead>Net Cash Movement</TableHead>
-                  <TableHead className="text-right">Outstanding Dues</TableHead>
+              <TableHeader className="bg-[#28375C] text-white">
+                <TableRow className="border-b border-[#1b2640] hover:bg-[#28375C] bg-[#28375C]">
+                  <TableHead className="text-white font-semibold">Branch Center</TableHead>
+                  <TableHead className="text-white font-semibold">Code</TableHead>
+                  <TableHead className="text-white font-semibold">Active Students</TableHead>
+                  <TableHead className="text-white font-semibold">Total Fee Collections</TableHead>
+                  <TableHead className="text-white font-semibold">Operating Expenses</TableHead>
+                  <TableHead className="text-white font-semibold">Net Cash Movement</TableHead>
+                  <TableHead className="text-right text-white font-semibold pr-4">Outstanding Dues</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

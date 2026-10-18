@@ -21,6 +21,11 @@ export interface AcademicSession {
   endDate: string
   isCurrent: boolean
   isActive: boolean
+  _count?: {
+    admissions?: number
+    feePlans?: number
+    payments?: number
+  }
 }
 
 export interface InstituteSettings {
@@ -34,20 +39,40 @@ export interface InstituteSettings {
   logo_url: string | null
 }
 
+export interface Course {
+  id: string
+  name: string
+  code?: string | null
+  description?: string | null
+  defaultFee?: number | null
+  isActive: boolean
+  sortOrder: number
+  enrolledCount?: number
+  createdAt?: string
+  updatedAt?: string
+}
+
 interface AppContextType {
   selectedBranchId: string | 'ALL'
   setSelectedBranchId: (id: string | 'ALL') => void
-  selectedSessionId: string | null
-  setSelectedSessionId: (id: string) => void
+  selectedSessionId: string | 'ALL' | null
+  setSelectedSessionId: (id: string | 'ALL') => void
   branches: Branch[]
   sessions: AcademicSession[]
+  courses: Course[]
+  activeCourses: Course[]
   currentBranch: Branch | null
   currentSession: AcademicSession | null
   settings: InstituteSettings | null
   activeLogoUrl: string | null
+  isSidebarCollapsed: boolean
+  setIsSidebarCollapsed: (collapsed: boolean) => void
+  toggleSidebar: () => void
   refetchMeta: () => void
   refetchSettings: () => void
+  refetchCourses: () => void
   isLoadingMeta: boolean
+  isLoadingCourses: boolean
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined)
@@ -57,8 +82,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return localStorage.getItem('sutawane_selected_branch') || 'ALL'
   })
 
-  const [selectedSessionId, setSelectedSessionIdState] = useState<string | null>(() => {
-    return localStorage.getItem('sutawane_selected_session') || null
+  const [selectedSessionId, setSelectedSessionIdState] = useState<string | 'ALL' | null>(() => {
+    return (localStorage.getItem('sutawane_selected_session') as string | 'ALL') || null
+  })
+
+  const [isSidebarCollapsed, setIsSidebarCollapsedState] = useState<boolean>(() => {
+    return localStorage.getItem('sutawane_sidebar_collapsed') === 'true'
   })
 
   const setSelectedBranchId = (id: string | 'ALL') => {
@@ -66,10 +95,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.setItem('sutawane_selected_branch', id)
   }
 
-  const setSelectedSessionId = (id: string) => {
+  const setSelectedSessionId = (id: string | 'ALL') => {
     setSelectedSessionIdState(id)
     localStorage.setItem('sutawane_selected_session', id)
   }
+
+  const setIsSidebarCollapsed = (collapsed: boolean) => {
+    setIsSidebarCollapsedState(collapsed)
+    localStorage.setItem('sutawane_sidebar_collapsed', String(collapsed))
+  }
+
+  const toggleSidebar = () => {
+    setIsSidebarCollapsedState((prev) => {
+      const next = !prev
+      localStorage.setItem('sutawane_sidebar_collapsed', String(next))
+      return next
+    })
+  }
+
+  // Global Ctrl+B shortcut to toggle sidebar
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
+        e.preventDefault()
+        toggleSidebar()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
 
   // Fetch branches
   const { data: branches = [], isLoading: isLoadingBranches, refetch: refetchBranches } = useQuery<Branch[]>({
@@ -109,7 +163,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Auto-select current session if not selected
   useEffect(() => {
-    if (sessions.length > 0 && !selectedSessionId) {
+    if (sessions.length > 0 && selectedSessionId === null) {
       const current = sessions.find((s) => s.isCurrent) || sessions[0]
       if (current) {
         setSelectedSessionId(current.id)
@@ -121,7 +175,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     ? null
     : branches.find((b) => b.id === selectedBranchId) || null
 
-  const currentSession = sessions.find((s) => s.id === selectedSessionId) || null
+  const currentSession = selectedSessionId === 'ALL'
+    ? null
+    : sessions.find((s) => s.id === selectedSessionId) || null
+
+  // Fetch courses / classes
+  const { data: courses = [], isLoading: isLoadingCourses, refetch: refetchCourses } = useQuery<Course[]>({
+    queryKey: ['courses'],
+    queryFn: async () => {
+      try {
+        return await api.get('/courses')
+      } catch {
+        return []
+      }
+    },
+  })
+
+  const activeCourses = useMemo(() => {
+    return courses.filter((c) => c.isActive)
+  }, [courses])
 
   // Resolve active logo: branch logo if branch selected and has logo, otherwise master logo
   const activeLogoUrl = useMemo(() => {
@@ -135,6 +207,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     refetchBranches()
     refetchSessions()
     refetchSettings()
+    refetchCourses()
   }
 
   return (
@@ -146,13 +219,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setSelectedSessionId,
         branches,
         sessions,
+        courses,
+        activeCourses,
         currentBranch,
         currentSession,
         settings,
         activeLogoUrl,
+        isSidebarCollapsed,
+        setIsSidebarCollapsed,
+        toggleSidebar,
         refetchMeta,
         refetchSettings,
+        refetchCourses,
         isLoadingMeta: isLoadingBranches || isLoadingSessions,
+        isLoadingCourses,
       }}
     >
       {children}

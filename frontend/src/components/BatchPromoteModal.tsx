@@ -44,27 +44,38 @@ export const BatchPromoteModal: React.FC<BatchPromoteModalProps> = ({
   onSuccess,
 }) => {
   const queryClient = useQueryClient()
-  const { branches, sessions, selectedSessionId } = useApp()
+  const { branches, sessions, selectedSessionId, courses, activeCourses } = useApp()
 
   const [targetSessionId, setTargetSessionId] = useState('')
   const [targetBranchId, setTargetBranchId] = useState('KEEP')
-  const [targetStandard, setTargetStandard] = useState('Class 11 Science')
+  const [targetStandard, setTargetStandard] = useState('')
   const [defaultTotalFees, setDefaultTotalFees] = useState('30000')
   const [carryForwardDues, setCarryForwardDues] = useState(true)
   const [formError, setFormError] = useState('')
   const [resultSummary, setResultSummary] = useState<any>(null)
 
   useEffect(() => {
-    if (isOpen && sessions.length > 0) {
-      // Pick next session that is not the current filter session
-      const next = sessions.find((s) => s.id !== selectedSessionId) || sessions[0]
-      if (next) {
-        setTargetSessionId(next.id)
+    if (isOpen) {
+      if (sessions.length > 0) {
+        // Pick next session that is not the current filter session
+        const next = sessions.find((s) => s.id !== selectedSessionId) || sessions[0]
+        if (next) {
+          setTargetSessionId(next.id)
+        }
       }
+
+      const defaultCourse = activeCourses[0] || courses[0]
+      if (defaultCourse && !targetStandard) {
+        setTargetStandard(defaultCourse.name)
+        if (defaultCourse.defaultFee) {
+          setDefaultTotalFees(String(defaultCourse.defaultFee))
+        }
+      }
+
       setResultSummary(null)
       setFormError('')
     }
-  }, [isOpen, sessions, selectedSessionId])
+  }, [isOpen, sessions, selectedSessionId, activeCourses, courses])
 
   const batchPromoteMutation = useMutation({
     mutationFn: (data: any) => api.post('/students/batch-promote', data),
@@ -215,12 +226,26 @@ export const BatchPromoteModal: React.FC<BatchPromoteModalProps> = ({
                       <GraduationCap className="w-3.5 h-3.5 text-primary" />
                       Promoted Standard / Class *
                     </label>
-                    <Input
+                    <select
                       value={targetStandard}
-                      onChange={(e) => setTargetStandard(e.target.value)}
-                      placeholder="e.g. Class 11 Science"
+                      onChange={(e) => {
+                        const val = e.target.value
+                        setTargetStandard(val)
+                        const matched = courses.find((c) => c.name === val)
+                        if (matched?.defaultFee) {
+                          setDefaultTotalFees(String(matched.defaultFee))
+                        }
+                      }}
+                      className="w-full h-9 rounded-md border border-input bg-background px-3 text-xs focus:outline-none"
                       required
-                    />
+                    >
+                      <option value="">-- Select Class / Course --</option>
+                      {courses.map((c) => (
+                        <option key={c.id} value={c.name}>
+                          {c.name} {c.code ? `(${c.code})` : ''} {c.defaultFee ? `· ₹${c.defaultFee.toLocaleString('en-IN')}` : ''} {!c.isActive ? '(Archived)' : ''}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
                   <div className="space-y-1.5">

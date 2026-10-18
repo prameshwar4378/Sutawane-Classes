@@ -81,12 +81,12 @@ export const StudentSearchAutocomplete: React.FC<StudentSearchAutocompleteProps>
     queryFn: () =>
       api.get('/students', {
         branchId: effectiveBranchId !== 'ALL' ? effectiveBranchId : undefined,
-        sessionId: effectiveSessionId || undefined,
+        sessionId: effectiveSessionId && effectiveSessionId !== 'ALL' ? effectiveSessionId : undefined,
         isActive: 'true', // by default search active students
       }),
   })
 
-  // Filter students matching query
+  // Filter students matching query with multi-token smart matching
   const suggestions = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) {
@@ -94,15 +94,32 @@ export const StudentSearchAutocomplete: React.FC<StudentSearchAutocompleteProps>
       return students.slice(0, 10)
     }
 
+    const terms = q.split(/\s+/).filter(Boolean)
     return students
       .filter((s) => {
-        return (
-          s.fullName?.toLowerCase().includes(q) ||
-          s.rollNumber?.toLowerCase().includes(q) ||
-          s.parentPhone?.includes(q) ||
-          (s.studentCode && s.studentCode.toLowerCase().includes(q)) ||
-          s.standard?.toLowerCase().includes(q)
-        )
+        const name = (s.fullName || '').toLowerCase()
+        const roll = (s.rollNumber || '').toLowerCase()
+        const phone = (s.parentPhone || '').replace(/\D/g, '')
+        const studentPhone = (s.studentPhone || '').replace(/\D/g, '')
+        const code = (s.studentCode || '').toLowerCase()
+        const standard = (s.standard || '').toLowerCase()
+        const branch = (s.branchName || '').toLowerCase()
+        const session = (s.sessionName || '').toLowerCase()
+
+        return terms.every((term) => {
+          const cleanDigits = term.replace(/\D/g, '')
+          return (
+            name.includes(term) ||
+            roll.includes(term) ||
+            code.includes(term) ||
+            standard.includes(term) ||
+            branch.includes(term) ||
+            session.includes(term) ||
+            (cleanDigits && phone.includes(cleanDigits)) ||
+            (cleanDigits && studentPhone.includes(cleanDigits)) ||
+            s.parentPhone?.includes(term)
+          )
+        })
       })
       .slice(0, 20) // show up to 20 matching suggestions
   }, [students, query])
@@ -301,10 +318,11 @@ export const StudentSearchAutocomplete: React.FC<StudentSearchAutocompleteProps>
                   {suggestions.map((student, index) => {
                     const isHighlighted = index === highlightedIndex
                     const pendingDue = student.overallPendingAmount !== undefined ? student.overallPendingAmount : student.pendingFees || 0
+                    const itemKey = `${student.id}-${student.admissionId || student.rollNumber || index}`
 
                     return (
                       <div
-                        key={student.id}
+                        key={itemKey}
                         onMouseDown={(e) => {
                           e.preventDefault() // prevent input blur before click
                           handleSelect(student)
@@ -326,16 +344,29 @@ export const StudentSearchAutocomplete: React.FC<StudentSearchAutocompleteProps>
 
                           {/* Student Details */}
                           <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
                               <span className="font-semibold text-foreground truncate">
                                 {student.fullName}
                               </span>
-                              <span className="font-mono text-[10px] text-muted-foreground">
-                                ({student.rollNumber})
-                              </span>
+                              <Badge variant="outline" className="font-mono text-[10px] py-0 px-1 bg-muted/40">
+                                {student.rollNumber}
+                              </Badge>
+                              {student.studentCode && (
+                                <span className="font-mono text-[9px] text-muted-foreground/60 hidden sm:inline">
+                                  {student.studentCode}
+                                </span>
+                              )}
                             </div>
-                            <div className="text-[10px] text-muted-foreground flex items-center gap-2 mt-0.5">
-                              <span>{student.standard}</span>
+                            <div className="text-[10px] text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
+                              <span className="font-medium text-foreground/80">{student.standard}</span>
+                              {student.sessionName && (
+                                <>
+                                  <span>•</span>
+                                  <Badge variant="outline" className="text-[9px] py-0 px-1 text-primary border-primary/20">
+                                    {student.sessionName}
+                                  </Badge>
+                                </>
+                              )}
                               {effectiveBranchId === 'ALL' && (
                                 <>
                                   <span>•</span>

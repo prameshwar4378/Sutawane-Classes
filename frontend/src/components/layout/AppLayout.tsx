@@ -2,10 +2,19 @@ import React from 'react'
 import { Outlet } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
 import { Header } from './Header'
+import { useAuth } from '@/context/AuthContext'
+import { SoftwareLockScreen } from '@/components/SoftwareLockScreen'
 
 export const AppLayout: React.FC = () => {
+  const { isClassOwner, license } = useAuth()
+
+  // If user is Class Owner and software is expired or deactivated, show lock screen
+  const isLocked = isClassOwner && license && (!license.isActive || license.isExpired)
+
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-background font-sans antialiased text-foreground">
+      {isLocked && <SoftwareLockScreen />}
+
       {/* Permanent Fixed Left Sidebar */}
       <Sidebar />
 

@@ -18,22 +18,92 @@ export function formatCurrency(amount: number): string {
 }
 
 /**
- * Format a date string or Date object to Indian locale DD/MM/YYYY
+ * Returns today's local date in YYYY-MM-DD format (ideal for HTML5 <input type="date">)
+ * Avoids the UTC-lag bug where `new Date().toISOString().split('T')[0]` returns yesterday's date
+ * in timezones ahead of UTC (e.g., IST UTC+05:30 early morning).
  */
-export function formatDate(date: string | Date): string {
-  const d = typeof date === "string" ? new Date(date) : date
+export function getTodayDateString(date: Date = new Date()): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+/**
+ * Converts any date or ISO string to local YYYY-MM-DD format for date inputs.
+ * If null/undefined/empty, returns today's local date.
+ */
+export function toInputDateString(date?: string | Date | null): string {
+  if (!date) return getTodayDateString()
+  if (typeof date === 'string') {
+    const trimmed = date.trim()
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed
+    if (/^\d{4}-\d{2}-\d{2}T/.test(trimmed)) {
+      const datePart = trimmed.split('T')[0]
+      if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return datePart
+    }
+    const d = new Date(trimmed)
+    if (!isNaN(d.getTime())) {
+      return getTodayDateString(d)
+    }
+    return getTodayDateString()
+  }
+  if (date instanceof Date && !isNaN(date.getTime())) {
+    return getTodayDateString(date)
+  }
+  return getTodayDateString()
+}
+
+/**
+ * Format a date string or Date object to Indian locale DD/MM/YYYY.
+ * Returns "—" if date is null, undefined, or empty.
+ */
+export function formatDate(date?: string | Date | null): string {
+  if (!date) return '—'
+  if (typeof date === "string") {
+    const trimmed = date.trim()
+    if (!trimmed) return '—'
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      const [year, month, day] = trimmed.split('-')
+      return `${day}/${month}/${year}`
+    }
+    const d = new Date(trimmed)
+    if (isNaN(d.getTime())) return trimmed
+    return new Intl.DateTimeFormat("en-IN", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    }).format(d)
+  }
+  if (isNaN(new Date(date).getTime())) return '—'
   return new Intl.DateTimeFormat("en-IN", {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
-  }).format(d)
+  }).format(date)
 }
 
 /**
- * Format a date to a more readable form like "11 Oct 2026"
+ * Format a date to a more readable form like "11 Oct 2026".
+ * Returns "—" if date is null, undefined, or empty.
  */
-export function formatDateLong(date: string | Date): string {
+export function formatDateLong(date?: string | Date | null): string {
+  if (!date) return '—'
+  if (typeof date === "string") {
+    const trimmed = date.trim()
+    if (!trimmed) return '—'
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      const [year, month, day] = trimmed.split('-')
+      const d = new Date(Number(year), Number(month) - 1, Number(day))
+      return new Intl.DateTimeFormat("en-IN", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      }).format(d)
+    }
+  }
   const d = typeof date === "string" ? new Date(date) : date
+  if (!d || isNaN(d.getTime())) return '—'
   return new Intl.DateTimeFormat("en-IN", {
     day: "numeric",
     month: "short",
