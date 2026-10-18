@@ -788,7 +788,11 @@ feeRouter.get('/dues', async (req: Request, res: Response) => {
           include: {
             admission: {
               include: {
-                student: true,
+                student: {
+                  include: {
+                    previousSessionDues: true,
+                  },
+                },
                 branch: true,
                 session: true,
               },
@@ -814,6 +818,11 @@ feeRouter.get('/dues', async (req: Request, res: Response) => {
         const isCleared = balance <= 0
         const computedStatus = isCleared ? 'PAID' : calculateInstallmentStatus(inst.amountDue, paid, inst.dueDate)
 
+        const previousDuesPending = ((student as any).previousSessionDues || []).reduce(
+          (sum: number, pd: any) => sum + (pd.isCleared ? 0 : (pd.balanceRemaining || 0)),
+          0
+        )
+
         return {
           id: inst.id,
           installmentNo: inst.installmentNo,
@@ -837,6 +846,8 @@ feeRouter.get('/dues', async (req: Request, res: Response) => {
             parentPhone: student.parentPhone,
             branchName: admission.branch.name,
             sessionName: admission.session.name,
+            previousDuesPending,
+            overallPendingAmount: balance + previousDuesPending,
           },
         }
       })

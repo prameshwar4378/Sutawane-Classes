@@ -521,14 +521,24 @@ export const StudentsPage: React.FC = () => {
       return
     }
 
+    const currentPending = Number(student.pendingFees || 0)
+    const priorPending = Number(student.previousDuesPending || 0)
+    const overallPending =
+      student.overallPendingAmount !== undefined
+        ? Number(student.overallPendingAmount)
+        : currentPending + priorPending
+
     const message = buildFeeReminderWhatsAppMessage({
       instituteName: settings?.institute_name,
       studentName: student.fullName,
+      studentCode: student.studentCode,
       rollNumber: student.rollNumber,
       standard: student.standard,
-      pendingAmount: student.pendingFees || 0,
-      overallPendingAmount: student.overallPendingAmount ?? student.pendingFees ?? 0,
+      currentPendingAmount: currentPending,
+      previousDuesPending: priorPending,
+      overallPendingAmount: overallPending,
       branchName: student.branchName,
+      sessionName: student.sessionName,
       helpline: settings?.phone,
     })
 

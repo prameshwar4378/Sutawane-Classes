@@ -535,28 +535,75 @@ export const StudentDetailPage: React.FC = () => {
             Collect Fees
           </Button>
           {student.parentPhone && (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                const msg = buildAdmissionWhatsAppMessage({
-                  instituteName: settings?.institute_name,
-                  studentName: student.fullName,
-                  rollNumber: admission?.rollNumber || student.studentCode,
-                  standard: admission?.standard || '',
-                  sessionName: admission?.session?.displayName || admission?.session?.name,
-                  branchName: admission?.branch?.name,
-                  totalFees: admission?.feePlan?.totalFees || 0,
-                  helpline: settings?.phone,
-                })
-                openWhatsApp(student.parentPhone, msg)
-              }}
-              className="gap-2 text-emerald-600 border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700"
-              title="Send admission details to registered parent via WhatsApp"
-            >
-              <WhatsAppIcon className="w-4 h-4" />
-              <span>WhatsApp Admission</span>
-            </Button>
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  const currentPending = Number(admission?.pendingFees || 0)
+                  const priorPending = (student.previousSessionDues || []).reduce(
+                    (sum: number, pd: any) => sum + (pd.isCleared ? 0 : Number(pd.balanceRemaining || 0)),
+                    0
+                  )
+                  const overallPending =
+                    fee?.overallPendingAmount !== undefined
+                      ? Number(fee.overallPendingAmount)
+                      : currentPending + priorPending
+
+                  const msg = buildFeeReminderWhatsAppMessage({
+                    instituteName: settings?.institute_name,
+                    studentName: student.fullName,
+                    studentCode: student.studentCode,
+                    rollNumber: admission?.rollNumber,
+                    standard: admission?.standard,
+                    currentPendingAmount: currentPending,
+                    previousDuesPending: priorPending,
+                    overallPendingAmount: overallPending,
+                    nextDueDate: fee?.nextDueDate,
+                    branchName: admission?.branch?.name,
+                    sessionName: admission?.session?.displayName || admission?.session?.name,
+                    helpline: settings?.phone,
+                  })
+                  openWhatsApp(student.parentPhone, msg)
+                }}
+                className="gap-2 text-emerald-600 border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700"
+                title={
+                  ((fee?.overallPendingAmount ?? 0) > 0 || (admission?.pendingFees ?? 0) > 0)
+                    ? 'Send fee dues reminder breakdown to parent via WhatsApp'
+                    : 'Send fee clearance confirmation to parent via WhatsApp'
+                }
+              >
+                <WhatsAppIcon className="w-4 h-4" />
+                <span>
+                  {((fee?.overallPendingAmount ?? 0) > 0 || (admission?.pendingFees ?? 0) > 0)
+                    ? 'WhatsApp Reminder'
+                    : 'WhatsApp Fee Status'}
+                </span>
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  const msg = buildAdmissionWhatsAppMessage({
+                    instituteName: settings?.institute_name,
+                    studentName: student.fullName,
+                    studentCode: student.studentCode,
+                    rollNumber: admission?.rollNumber || student.studentCode,
+                    standard: admission?.standard || '',
+                    sessionName: admission?.session?.displayName || admission?.session?.name,
+                    branchName: admission?.branch?.name,
+                    totalFees: admission?.feePlan?.totalFees || 0,
+                    helpline: settings?.phone,
+                  })
+                  openWhatsApp(student.parentPhone, msg)
+                }}
+                className="gap-2 text-emerald-600 border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700"
+                title="Send admission details to registered parent via WhatsApp"
+              >
+                <WhatsAppIcon className="w-4 h-4" />
+                <span>WhatsApp Admission</span>
+              </Button>
+            </>
           )}
           <Button onClick={openEditDialog} variant="outline" className="gap-2">
             <Edit2 className="w-4 h-4" />
@@ -651,11 +698,34 @@ export const StudentDetailPage: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => {
-                      const msg = `Hello from ${settings?.institute_name || 'Sutawane Classes'} regarding ${student.fullName}.`
+                      const currentPending = Number(admission?.pendingFees || 0)
+                      const priorPending = (student.previousSessionDues || []).reduce(
+                        (sum: number, pd: any) => sum + (pd.isCleared ? 0 : Number(pd.balanceRemaining || 0)),
+                        0
+                      )
+                      const overallPending =
+                        fee?.overallPendingAmount !== undefined
+                          ? Number(fee.overallPendingAmount)
+                          : currentPending + priorPending
+
+                      const msg = buildFeeReminderWhatsAppMessage({
+                        instituteName: settings?.institute_name,
+                        studentName: student.fullName,
+                        studentCode: student.studentCode,
+                        rollNumber: admission?.rollNumber,
+                        standard: admission?.standard,
+                        currentPendingAmount: currentPending,
+                        previousDuesPending: priorPending,
+                        overallPendingAmount: overallPending,
+                        nextDueDate: fee?.nextDueDate,
+                        branchName: admission?.branch?.name,
+                        sessionName: admission?.session?.displayName || admission?.session?.name,
+                        helpline: settings?.phone,
+                      })
                       openWhatsApp(student.parentPhone, msg)
                     }}
                     className="p-1 rounded text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700"
-                    title="Open WhatsApp chat with parent"
+                    title="Send official fee reminder & status to parent on WhatsApp"
                   >
                     <WhatsAppIcon className="w-3.5 h-3.5" />
                   </button>
@@ -1161,16 +1231,47 @@ export const StudentDetailPage: React.FC = () => {
                             {due.balanceRemaining === 0 ? 'Settled' : 'Pending Recovery'}
                           </Badge>
                           {due.balanceRemaining > 0 && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleOpenCollectFee(undefined, due.id, due.balanceRemaining)}
-                              className="h-6 px-1.5 text-[10px] text-emerald-700 border-emerald-500/40 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 gap-1 font-medium"
-                              title="Collect this carried due"
-                            >
-                              <CreditCard className="w-3 h-3 text-emerald-600" />
-                              Collect
-                            </Button>
+                            <>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleOpenCollectFee(undefined, due.id, due.balanceRemaining)}
+                                className="h-6 px-1.5 text-[10px] text-emerald-700 border-emerald-500/40 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 gap-1 font-medium"
+                                title="Collect this carried due"
+                              >
+                                <CreditCard className="w-3 h-3 text-emerald-600" />
+                                Collect
+                              </Button>
+                              {student.parentPhone && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    const currentPending = Number(admission?.pendingFees || 0)
+                                    const priorPending = Number(due.balanceRemaining || 0)
+                                    const msg = buildFeeReminderWhatsAppMessage({
+                                      instituteName: settings?.institute_name,
+                                      studentName: student.fullName,
+                                      studentCode: student.studentCode,
+                                      rollNumber: admission?.rollNumber,
+                                      standard: admission?.standard,
+                                      currentPendingAmount: currentPending,
+                                      previousDuesPending: priorPending,
+                                      overallPendingAmount: currentPending + priorPending,
+                                      branchName: admission?.branch?.name,
+                                      sessionName: due.originalSessionName,
+                                      helpline: settings?.phone,
+                                    })
+                                    openWhatsApp(student.parentPhone, msg)
+                                  }}
+                                  className="h-6 px-1.5 text-[10px] text-emerald-600 border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700 gap-1 font-medium"
+                                  title="Send reminder for this carried due to parent via WhatsApp"
+                                >
+                                  <WhatsAppIcon className="w-3 h-3" />
+                                  <span>WhatsApp</span>
+                                </Button>
+                              )}
+                            </>
                           )}
                         </TableCell>
                       </TableRow>

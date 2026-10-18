@@ -1,13 +1,13 @@
 import React from 'react'
-import { formatDateLong, formatCurrency } from './utils'
+import { formatDateLong } from './utils'
 
 /**
  * Standardize phone numbers to international WhatsApp format.
- * Defaults to India (+91) if 10 digits provided.
+ * Defaults to India (+91) if 10 or 11 digits provided.
  */
 export function formatWhatsAppNumber(rawPhone: string): string {
   if (!rawPhone) return ''
-  let digits = rawPhone.replace(/\D/g, '')
+  const digits = rawPhone.replace(/\D/g, '')
 
   // 10 digits e.g. 9876543210 -> 919876543210
   if (digits.length === 10) {
@@ -28,18 +28,198 @@ export function formatWhatsAppNumber(rawPhone: string): string {
 }
 
 /**
- * Open WhatsApp with pre-filled message
+ * Open WhatsApp with pre-filled message.
+ * Fully compatible with Electron Desktop App (via shell.openExternal) and Web Browsers.
  */
 export function openWhatsApp(phone: string, message: string): void {
   const formattedPhone = formatWhatsAppNumber(phone)
   if (!formattedPhone || formattedPhone.length < 10) {
-    alert('Invalid or missing registered phone number.')
+    alert('Invalid or missing registered parent phone number.')
     return
   }
 
   const encodedMsg = encodeURIComponent(message)
-  const url = `https://wa.me/${formattedPhone}?text=${encodedMsg}`
+  const url = `https://api.whatsapp.com/send?phone=${formattedPhone}&text=${encodedMsg}`
+
+  // Check if running inside Electron desktop shell
+  const electronAPI = (window as any).electronAPI
+  if (electronAPI && typeof electronAPI.openExternal === 'function') {
+    electronAPI.openExternal(url).catch((err: any) => {
+      console.warn('[WhatsApp] electronAPI.openExternal error, falling back to window.open:', err)
+      window.open(url, '_blank', 'noopener,noreferrer')
+    })
+    return
+  }
+
+  // Standard web browser fallback
   window.open(url, '_blank', 'noopener,noreferrer')
+}
+
+export interface FeeReminderParams {
+  instituteName?: string
+  studentName: string
+  studentCode?: string
+  rollNumber?: string
+  standard?: string
+  currentPendingAmount?: number
+  pendingAmount?: number // Backward compatibility
+  previousDuesPending?: number
+  overallPendingAmount?: number
+  nextDueDate?: string | null
+  branchName?: string
+  sessionName?: string
+  helpline?: string
+}
+
+/**
+ * Intelligent Fee Reminder & Clearance WhatsApp Message Template
+ * Correctly distinguishes between:
+ * 1. Both Current Session Pending AND Prior Year Dues Pending
+ * 2. Current Session Pending ONLY (Prior Year Dues are Cleared)
+ * 3. Prior Year Dues Pending ONLY (Current Session is Paid in Full)
+ * 4. All Fees Completely Cleared (Zero Dues Appreciation Note)
+ */
+export function buildFeeReminderWhatsAppMessage(params: FeeReminderParams): string {
+  const institute = (params.instituteName || 'Sutawane Classes').toUpperCase()
+  const branchText = params.branchName ? `📍 *Branch:* ${params.branchName}\n` : ''
+  const helplineText = params.helpline ? `📞 *Helpline / Accounts:* ${params.helpline}` : ''
+
+  const currentDue = Number(
+    params.currentPendingAmount !== undefined
+      ? params.currentPendingAmount
+      : params.pendingAmount !== undefined
+      ? params.pendingAmount
+      : 0
+  )
+  const priorDue = Number(params.previousDuesPending || 0)
+  const totalDue =
+    params.overallPendingAmount !== undefined
+      ? Number(params.overallPendingAmount)
+      : currentDue + priorDue
+
+  const dueDateFormatted = params.nextDueDate
+    ? formatDateLong(params.nextDueDate)
+    : null
+
+  // ----------------------------------------------------
+  // CASE 1: 100% CLEARED / ZERO OUTSTANDING DUES
+  // ----------------------------------------------------
+  if (totalDue <= 0 && currentDue <= 0 && priorDue <= 0) {
+    return (
+      `🏛️ *${institute}*\n` +
+      branchText +
+      `────────────────────────\n` +
+      `🎉 *FEE CLEARED — APPRECIATION NOTE*\n\n` +
+      `Dear Parent, Greetings! 🙏\n\n` +
+      `We are pleased to inform you that all academic fee commitments for *${params.studentName}* are **100% CLEARED (NIL)** across all academic sessions! ✅\n\n` +
+      `📋 *Student Profile:*\n` +
+      `• 🎓 *Student:* *${params.studentName}*\n` +
+      (params.studentCode ? `• 🆔 *Student ID:* *${params.studentCode}*\n` : '') +
+      (params.rollNumber ? `• 🏷️ *Roll No:* *${params.rollNumber}*\n` : '') +
+      (params.standard ? `• 📚 *Class / Course:* *${params.standard}*\n` : '') +
+      (params.sessionName ? `• 📅 *Session:* *${params.sessionName}*\n` : '') +
+      `\n🌟 *Current Fee Status:*\n` +
+      `• 📚 Current Session Fee: *Paid in Full ✅*\n` +
+      `• ⏳ Prior Year Dues: *Nil (Cleared) ✅*\n` +
+      `• 🧾 *Total Outstanding: ₹0 (Nil)*\n\n` +
+      `Thank you sincerely for your timely payments and valued partnership in your child's education!\n\n` +
+      `Warm Regards,\n` +
+      `*${institute} Management*\n` +
+      helplineText
+    )
+  }
+
+  // ----------------------------------------------------
+  // CASE 2: BOTH CURRENT SESSION & PRIOR YEAR DUES PENDING
+  // ----------------------------------------------------
+  if (currentDue > 0 && priorDue > 0) {
+    return (
+      `🏛️ *${institute}*\n` +
+      branchText +
+      `────────────────────────\n` +
+      `📢 *OFFICIAL FEE PAYMENT REMINDER*\n\n` +
+      `Dear Parent, Greetings! 🙏\n` +
+      `This is a gentle reminder regarding the outstanding academic fee for:\n\n` +
+      `🎓 *Student Name:* *${params.studentName}*\n` +
+      (params.studentCode ? `🆔 *Student ID:* *${params.studentCode}*\n` : '') +
+      (params.rollNumber ? `📋 *Roll Number:* *${params.rollNumber}*\n` : '') +
+      (params.standard ? `📚 *Class / Course:* *${params.standard}*\n` : '') +
+      (params.sessionName ? `📅 *Academic Session:* *${params.sessionName}*\n` : '') +
+      `\n💰 *FEE BALANCE BREAKDOWN:*\n` +
+      `• 📚 Current Session Pending: *₹${currentDue.toLocaleString('en-IN')}*\n` +
+      `• ⏳ Prior Session Outstanding Dues: *₹${priorDue.toLocaleString('en-IN')}*\n` +
+      `────────────────────────\n` +
+      `🧾 *TOTAL NET OUTSTANDING: ₹${totalDue.toLocaleString('en-IN')}*\n` +
+      (dueDateFormatted ? `📅 *Upcoming Due Date: ${dueDateFormatted}*\n` : '') +
+      `────────────────────────\n\n` +
+      `💳 *Payment Methods:*\n` +
+      `1. Center Office (Cash / Cheque / Card)\n` +
+      `2. Online UPI Payment (Contact center office for official QR code)\n\n` +
+      `Kindly arrange to clear the outstanding balance at your earliest convenience. If payment has already been remitted, please disregard this automated notification.\n\n` +
+      `Warm Regards,\n` +
+      `*${institute} Accounts*\n` +
+      helplineText
+    )
+  }
+
+  // ----------------------------------------------------
+  // CASE 3: CURRENT SESSION PENDING ONLY (PRIOR DUES NIL)
+  // ----------------------------------------------------
+  if (currentDue > 0 && priorDue <= 0) {
+    return (
+      `🏛️ *${institute}*\n` +
+      branchText +
+      `────────────────────────\n` +
+      `📢 *OFFICIAL FEE PAYMENT REMINDER*\n\n` +
+      `Dear Parent, Greetings! 🙏\n` +
+      `This is a gentle reminder regarding the installment fee for:\n\n` +
+      `🎓 *Student Name:* *${params.studentName}*\n` +
+      (params.studentCode ? `🆔 *Student ID:* *${params.studentCode}*\n` : '') +
+      (params.rollNumber ? `📋 *Roll Number:* *${params.rollNumber}*\n` : '') +
+      (params.standard ? `📚 *Class / Course:* *${params.standard}*\n` : '') +
+      (params.sessionName ? `📅 *Academic Session:* *${params.sessionName}*\n` : '') +
+      `\n💰 *FEE BALANCE SUMMARY:*\n` +
+      `• 📚 Current Session Pending: *₹${currentDue.toLocaleString('en-IN')}*\n` +
+      `• ⏳ Prior Session Dues: *Nil (Fully Cleared) ✅*\n` +
+      `────────────────────────\n` +
+      `🧾 *NET DUE AMOUNT: ₹${currentDue.toLocaleString('en-IN')}*\n` +
+      (dueDateFormatted ? `📅 *Due Date: ${dueDateFormatted}*\n` : '') +
+      `────────────────────────\n\n` +
+      `💳 *Payment Options:*\n` +
+      `1. Center Office (Cash / Cheque / Card)\n` +
+      `2. Online UPI Transfer (Contact center office for official QR code)\n\n` +
+      `Kindly clear the due installment at your earliest convenience. Thank you for your continued cooperation!\n\n` +
+      `Warm Regards,\n` +
+      `*${institute} Accounts*\n` +
+      helplineText
+    )
+  }
+
+  // ----------------------------------------------------
+  // CASE 4: PRIOR YEAR CARRIED DUES PENDING ONLY (CURRENT SESSION SETTLED)
+  // ----------------------------------------------------
+  return (
+    `🏛️ *${institute}*\n` +
+    branchText +
+    `────────────────────────\n` +
+    `📢 *OFFICIAL FEE PAYMENT REMINDER*\n\n` +
+    `Dear Parent, Greetings! 🙏\n` +
+    `This is a reminder regarding the carried-forward academic dues for:\n\n` +
+    `🎓 *Student Name:* *${params.studentName}*\n` +
+    (params.studentCode ? `🆔 *Student ID:* *${params.studentCode}*\n` : '') +
+    (params.rollNumber ? `📋 *Roll Number:* *${params.rollNumber}*\n` : '') +
+    (params.standard ? `📚 *Class / Course:* *${params.standard}*\n` : '') +
+    `\n💰 *FEE BALANCE BREAKDOWN:*\n` +
+    `• 📚 Current Session: *Paid in Full (Nil) ✅*\n` +
+    `• ⏳ Prior Session Carried Dues: *₹${priorDue.toLocaleString('en-IN')}*\n` +
+    `────────────────────────\n` +
+    `🧾 *TOTAL OUTSTANDING TO CLEAR: ₹${priorDue.toLocaleString('en-IN')}*\n` +
+    `────────────────────────\n\n` +
+    `Kindly arrange to settle the carried-forward balance at the center office or via UPI at your earliest convenience.\n\n` +
+    `Warm Regards,\n` +
+    `*${institute} Accounts*\n` +
+    helplineText
+  )
 }
 
 /**
@@ -48,6 +228,7 @@ export function openWhatsApp(phone: string, message: string): void {
 export function buildReceiptWhatsAppMessage(params: {
   instituteName?: string
   studentName: string
+  studentCode?: string
   rollNumber?: string
   standard?: string
   receiptNumber: string
@@ -59,30 +240,39 @@ export function buildReceiptWhatsAppMessage(params: {
   branchName?: string
   helpline?: string
 }): string {
-  const institute = params.instituteName || 'Sutawane Classes'
-  const helplineText = params.helpline ? `\n📞 Helpline: ${params.helpline}` : ''
-  const refText = params.referenceNumber ? `\n• Txn / Ref No: *${params.referenceNumber}*` : ''
+  const institute = (params.instituteName || 'Sutawane Classes').toUpperCase()
+  const branchText = params.branchName ? `📍 *Branch:* ${params.branchName}\n` : ''
+  const helplineText = params.helpline ? `📞 *Helpline / Accounts:* ${params.helpline}` : ''
+  const refText = params.referenceNumber ? `\n• 🏦 Txn / Ref No: *${params.referenceNumber}*` : ''
+
   const balanceText =
     params.remainingBalance !== undefined
-      ? params.remainingBalance === 0
-        ? '\n• Remaining Balance: *Nil (Fully Settled)*'
-        : `\n• Remaining Dues: *₹${params.remainingBalance.toLocaleString('en-IN')}*`
+      ? params.remainingBalance <= 0
+        ? '\n• 📊 Remaining Dues: *Nil (Fully Settled) ✅*'
+        : `\n• 📊 Remaining Dues: *₹${params.remainingBalance.toLocaleString('en-IN')}*`
       : ''
 
   return (
-    `Dear Parent, greetings from *${institute}*!\n\n` +
-    `We have successfully received a fee payment for *${params.studentName}*.\n\n` +
-    `📄 *Fee Payment Receipt Summary:*\n` +
-    `• Receipt No: *${params.receiptNumber}*\n` +
-    `• Amount Paid: *₹${params.totalAmount.toLocaleString('en-IN')}*\n` +
-    `• Payment Date: *${formatDateLong(params.paymentDate)}*\n` +
-    `• Payment Mode: *${params.paymentMode}*${refText}\n` +
-    `• Class / Course: *${params.standard || 'General'}*\n` +
-    (params.rollNumber ? `• Roll No: *${params.rollNumber}*\n` : '') +
-    (params.branchName ? `• Branch: *${params.branchName}*\n` : '') +
+    `🏛️ *${institute}*\n` +
+    branchText +
+    `────────────────────────\n` +
+    `🧾 *OFFICIAL FEE PAYMENT RECEIPT*\n\n` +
+    `Dear Parent, Greetings! 🙏\n` +
+    `We acknowledge with thanks the receipt of fee payment for:\n\n` +
+    `🎓 *Student Name:* *${params.studentName}*\n` +
+    (params.studentCode ? `🆔 *Student ID:* *${params.studentCode}*\n` : '') +
+    (params.rollNumber ? `📋 *Roll Number:* *${params.rollNumber}*\n` : '') +
+    `📚 *Class / Course:* *${params.standard || 'General'}*\n` +
+    `\n💵 *PAYMENT SUMMARY:*\n` +
+    `• 🧾 Receipt No: *${params.receiptNumber}*\n` +
+    `• 💳 Amount Paid: *₹${params.totalAmount.toLocaleString('en-IN')}*\n` +
+    `• 📅 Payment Date: *${formatDateLong(params.paymentDate)}*\n` +
+    `• 💰 Payment Mode: *${params.paymentMode}*${refText}` +
     balanceText +
-    `\n\nThank you for your payment! Please retain this computer-generated confirmation for your records.\n` +
-    `- *${institute}*` +
+    `\n────────────────────────\n\n` +
+    `🙏 Thank you for your payment! Please retain this computer-generated confirmation for your records.\n\n` +
+    `Warm Regards,\n` +
+    `*${institute} Management*\n` +
     helplineText
   )
 }
@@ -93,6 +283,7 @@ export function buildReceiptWhatsAppMessage(params: {
 export function buildAdmissionWhatsAppMessage(params: {
   instituteName?: string
   studentName: string
+  studentCode?: string
   rollNumber: string
   standard: string
   sessionName?: string
@@ -100,52 +291,59 @@ export function buildAdmissionWhatsAppMessage(params: {
   totalFees: number
   helpline?: string
 }): string {
-  const institute = params.instituteName || 'Sutawane Classes'
-  const helplineText = params.helpline ? `\n📞 Helpline: ${params.helpline}` : ''
+  const institute = (params.instituteName || 'Sutawane Classes').toUpperCase()
+  const branchText = params.branchName ? `📍 *Branch:* ${params.branchName}\n` : ''
+  const helplineText = params.helpline ? `📞 *Helpline / Office:* ${params.helpline}` : ''
 
   return (
-    `Dear Parent, greetings from *${institute}*! 🎉\n\n` +
-    `We are delighted to confirm that the admission for *${params.studentName}* has been successfully registered!\n\n` +
-    `📋 *Admission Details:*\n` +
-    `• Roll Number: *${params.rollNumber}*\n` +
-    `• Class / Course: *${params.standard}*\n` +
-    (params.sessionName ? `• Academic Session: *${params.sessionName}*\n` : '') +
-    (params.branchName ? `• Center / Branch: *${params.branchName}*\n` : '') +
-    `• Annual Session Fee: *₹${params.totalFees.toLocaleString('en-IN')}*\n\n` +
-    `We extend a warm welcome to ${params.studentName} and look forward to an academic year of dedication and excellence!\n\n` +
-    `- *${institute}*` +
+    `🏛️ *${institute}*\n` +
+    branchText +
+    `────────────────────────\n` +
+    `🎉 *CONGRATULATIONS & WELCOME!* 🌟\n\n` +
+    `Dear Parent, Greetings! 🙏\n` +
+    `We are delighted to confirm that the admission for *${params.studentName}* has been officially registered!\n\n` +
+    `📋 *ADMISSION DETAILS:*\n` +
+    `• 🎓 *Student Name:* *${params.studentName}*\n` +
+    (params.studentCode ? `• 🆔 *Student ID:* *${params.studentCode}*\n` : '') +
+    `• 🏷️ *Roll Number:* *${params.rollNumber}*\n` +
+    `• 📚 *Class / Course:* *${params.standard}*\n` +
+    (params.sessionName ? `• 📅 *Academic Session:* *${params.sessionName}*\n` : '') +
+    (params.branchName ? `• 🏢 *Center / Branch:* *${params.branchName}*\n` : '') +
+    `• 💰 *Annual Session Fee:* *₹${params.totalFees.toLocaleString('en-IN')}*\n` +
+    `────────────────────────\n\n` +
+    `We extend a warm welcome to ${params.studentName} and look forward to an academic year of dedication and excellence! 🏆\n\n` +
+    `Warm Regards,\n` +
+    `*${institute} Administration*\n` +
     helplineText
   )
 }
 
 /**
- * Template for Fee Reminder WhatsApp Message
+ * Template for General Parent Notice / Greetings
  */
-export function buildFeeReminderWhatsAppMessage(params: {
+export function buildGeneralNoticeWhatsAppMessage(params: {
   instituteName?: string
   studentName: string
   rollNumber?: string
   standard?: string
-  pendingAmount: number
-  overallPendingAmount?: number
   branchName?: string
   helpline?: string
 }): string {
-  const institute = params.instituteName || 'Sutawane Classes'
-  const helplineText = params.helpline ? `\n📞 Helpline: ${params.helpline}` : ''
+  const institute = (params.instituteName || 'Sutawane Classes').toUpperCase()
+  const branchText = params.branchName ? `📍 *Branch:* ${params.branchName}\n` : ''
+  const helplineText = params.helpline ? `📞 *Helpline:* ${params.helpline}` : ''
 
   return (
-    `Dear Parent, greetings from *${institute}*.\n\n` +
-    `This is a gentle fee reminder regarding *${params.studentName}* ` +
-    `(Roll No: *${params.rollNumber || '—'}*, Course: *${params.standard || '—'}*).\n\n` +
-    `💰 *Outstanding Fee Details:*\n` +
-    `• Current Session Pending: *₹${params.pendingAmount.toLocaleString('en-IN')}*\n` +
-    (params.overallPendingAmount && params.overallPendingAmount !== params.pendingAmount
-      ? `• Overall Total Dues: *₹${params.overallPendingAmount.toLocaleString('en-IN')}*\n`
-      : '') +
-    `\nKindly clear the outstanding dues at the center office or via UPI at your earliest convenience.\n\n` +
-    `Thank you for your cooperation!\n` +
-    `- *${institute}*` +
+    `🏛️ *${institute}*\n` +
+    branchText +
+    `────────────────────────\n` +
+    `Dear Parent, Greetings from *${institute}*! 🙏\n\n` +
+    `Regarding student: *${params.studentName}* ` +
+    (params.rollNumber ? `(Roll No: *${params.rollNumber}*, ` : '(') +
+    `Course: *${params.standard || 'General'}*).\n\n` +
+    `Please let us know if you require any academic updates, fee receipts, or attendance support.\n\n` +
+    `Warm Regards,\n` +
+    `*${institute} Office*\n` +
     helplineText
   )
 }

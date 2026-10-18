@@ -589,6 +589,7 @@ export const FeeReceiptModal: React.FC<FeeReceiptModalProps> = ({ receipt, onClo
     const message = buildReceiptWhatsAppMessage({
       instituteName,
       studentName: receipt.studentName,
+      studentCode: receipt.studentCode,
       rollNumber: receipt.rollNumber,
       standard: receipt.standard,
       receiptNumber: receipt.receiptNumber,

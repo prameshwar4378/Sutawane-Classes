@@ -494,13 +494,25 @@ export const DuesPage: React.FC = () => {
       alert(`No parent mobile number registered for ${d.student?.fullName || 'student'}`)
       return
     }
+    const currentPending = Number(d.balanceRemaining || 0)
+    const priorPending = Number(d.student?.previousDuesPending || 0)
+    const overallPending =
+      d.student?.overallPendingAmount !== undefined
+        ? Number(d.student.overallPendingAmount)
+        : currentPending + priorPending
+
     const msg = buildFeeReminderWhatsAppMessage({
       instituteName: settings?.institute_name || currentBranch?.name || 'Sutawane Classes',
       studentName: d.student.fullName,
+      studentCode: d.student.studentCode,
       rollNumber: d.student.rollNumber,
       standard: d.student.standard,
-      pendingAmount: d.balanceRemaining,
+      currentPendingAmount: currentPending,
+      previousDuesPending: priorPending,
+      overallPendingAmount: overallPending,
+      nextDueDate: d.dueDate,
       branchName: d.student.branchName || currentBranch?.name,
+      sessionName: d.student.sessionName || currentSession?.name,
       helpline: settings?.phone || currentBranch?.phone,
     })
     openWhatsApp(phone, msg)

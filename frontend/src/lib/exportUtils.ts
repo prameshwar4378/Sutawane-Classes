@@ -1124,6 +1124,8 @@ export interface DueExportItem {
     parentPhone?: string
     branchName?: string
     sessionName?: string
+    previousDuesPending?: number
+    overallPendingAmount?: number
   }
 }
 

@@ -5,5 +5,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   isDesktop: true,
   getAppVersion: () => ipcRenderer.invoke('app:version'),
   getPlatform: () => process.platform,
-  getAppDataPath: () => ipcRenderer.invoke('app:data-path')
+  getAppDataPath: () => ipcRenderer.invoke('app:data-path'),
+  openExternal: (url: string) => ipcRenderer.invoke('app:open-external', url)
 });

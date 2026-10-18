@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 
@@ -92,6 +92,21 @@ function createWindow(): void {
     }
   });
 
+  // Intercept external URLs (like WhatsApp, mailto, web links) and launch in default OS browser/app
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (
+      url.startsWith('https://') ||
+      url.startsWith('http://') ||
+      url.startsWith('mailto:') ||
+      url.startsWith('tel:') ||
+      url.startsWith('whatsapp:')
+    ) {
+      shell.openExternal(url);
+      return { action: 'deny' };
+    }
+    return { action: 'allow' };
+  });
+
   if (isDev) {
     const devServerUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
     mainWindow.loadURL(devServerUrl);
@@ -109,6 +124,24 @@ function createWindow(): void {
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('app:data-path', () => persistentDataDir);
 ipcMain.handle('app:company', () => 'Ultoxy Technologies');
+ipcMain.handle('app:open-external', async (_event, url: string) => {
+  try {
+    if (
+      typeof url === 'string' &&
+      (url.startsWith('http://') ||
+        url.startsWith('https://') ||
+        url.startsWith('mailto:') ||
+        url.startsWith('tel:') ||
+        url.startsWith('whatsapp:'))
+    ) {
+      await shell.openExternal(url);
+      return true;
+    }
+  } catch (err) {
+    console.error('[Electron] Failed to open external URL:', url, err);
+  }
+  return false;
+});
 
 app.whenReady().then(async () => {
   if (!isDev) {
