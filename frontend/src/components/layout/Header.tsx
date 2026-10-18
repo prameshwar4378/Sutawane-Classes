@@ -14,9 +14,9 @@ export const Header: React.FC = () => {
   const navigate = useNavigate()
   const {
     selectedBranchId,
-    setSelectedBranchId,
+    requestBranchChange,
     selectedSessionId,
-    setSelectedSessionId,
+    requestSessionChange,
     branches,
     sessions,
     currentBranch,
@@ -228,7 +228,7 @@ export const Header: React.FC = () => {
           <span className="text-xs font-medium text-muted-foreground hidden lg:inline">Branch:</span>
           <select
             value={selectedBranchId}
-            onChange={(e) => setSelectedBranchId(e.target.value)}
+            onChange={(e) => requestBranchChange(e.target.value)}
             className="bg-transparent font-medium text-sm focus:outline-none cursor-pointer pr-1"
           >
             <option value="ALL">All Branches (Consolidated)</option>
@@ -248,7 +248,7 @@ export const Header: React.FC = () => {
           <span className="text-xs font-medium text-muted-foreground hidden lg:inline">Session:</span>
           <select
             value={selectedSessionId || ''}
-            onChange={(e) => setSelectedSessionId(e.target.value)}
+            onChange={(e) => requestSessionChange(e.target.value)}
             className="bg-transparent font-medium text-sm focus:outline-none cursor-pointer pr-1"
           >
             <option value="ALL">All Academic Sessions (Consolidated)</option>

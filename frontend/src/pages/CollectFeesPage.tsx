@@ -94,6 +94,7 @@ export const CollectFeesPage: React.FC = () => {
     sessions,
     courses,
     settings,
+    registerContextGuard,
   } = useApp()
 
   // Active view tab: 'collect' | 'history'
@@ -110,6 +111,7 @@ export const CollectFeesPage: React.FC = () => {
   const [paymentMode, setPaymentMode] = useState('UPI')
   const [referenceNumber, setReferenceNumber] = useState('')
   const [notes, setNotes] = useState('')
+  const [nextDueDate, setNextDueDate] = useState('')
   const [allocationMode, setAllocationMode] = useState<'FIFO' | 'CUSTOM'>('FIFO')
 
   // Modals & Feedback
@@ -172,6 +174,89 @@ export const CollectFeesPage: React.FC = () => {
       }),
     enabled: Boolean(selectedStudentId),
   })
+
+  // Sync Next Due Date when student profile changes
+  useEffect(() => {
+    if (selectedProfile) {
+      if (selectedProfile.nextDueDate) {
+        setNextDueDate(toInputDateString(selectedProfile.nextDueDate))
+      } else if (selectedProfile.dueDate) {
+        setNextDueDate(toInputDateString(selectedProfile.dueDate))
+      } else {
+        const d = new Date()
+        d.setDate(d.getDate() + 30)
+        setNextDueDate(toInputDateString(d))
+      }
+    } else {
+      setNextDueDate('')
+    }
+  }, [selectedProfile])
+
+  // ContextGuard for active fee collection form
+  useEffect(() => {
+    if (!selectedProfile || !selectedStudentId) {
+      registerContextGuard(null)
+      return
+    }
+
+    const admissions = selectedProfile.allAdmissions || selectedProfile.admissions || []
+    const enrolledBranchIds = new Set(admissions.map((a: any) => a.branchId))
+    const enrolledSessionIds = new Set(admissions.map((a: any) => a.sessionId))
+
+    registerContextGuard({
+      id: `fee-collect-${selectedProfile.id}`,
+      entityTitle: `${selectedProfile.fullName} (${selectedProfile.studentCode}) - Fee Collection`,
+      canChangeBranch: (targetBranchId) => {
+        if (targetBranchId === 'ALL') return { allowed: true }
+        if (enrolledBranchIds.has(targetBranchId)) return { allowed: true }
+        const targetBranch = branches.find((b) => b.id === targetBranchId)
+        return {
+          allowed: false,
+          reason: `Selected student "${selectedProfile.fullName}" is not enrolled in "${targetBranch?.name || 'this branch'}". Please complete or clear this fee entry first.`,
+        }
+      },
+      canChangeSession: (targetSessionId) => {
+        if (targetSessionId === 'ALL') return { allowed: true }
+        if (enrolledSessionIds.has(targetSessionId)) return { allowed: true }
+        const targetSession = sessions.find((s) => s.id === targetSessionId)
+        return {
+          allowed: false,
+          reason: `Selected student "${selectedProfile.fullName}" is not enrolled in session "${targetSession?.displayName || targetSession?.name || 'this session'}". Please complete or clear this fee entry first.`,
+        }
+      },
+    })
+
+    return () => {
+      registerContextGuard(null)
+    }
+  }, [selectedProfile, selectedStudentId, branches, sessions, registerContextGuard])
+
+  // Clear selected student if branch or session is switched to one where student is not enrolled
+  useEffect(() => {
+    if (selectedProfile && selectedStudentId) {
+      const admissions = selectedProfile.allAdmissions || selectedProfile.admissions || []
+      const enrolledBranchIds = admissions.map((a: any) => a.branchId)
+      const enrolledSessionIds = admissions.map((a: any) => a.sessionId)
+
+      const isSessionBad = Boolean(
+        selectedSessionId &&
+        selectedSessionId !== 'ALL' &&
+        enrolledSessionIds.length > 0 &&
+        !enrolledSessionIds.includes(selectedSessionId)
+      )
+      const isBranchBad = Boolean(
+        selectedBranchId &&
+        selectedBranchId !== 'ALL' &&
+        enrolledBranchIds.length > 0 &&
+        !enrolledBranchIds.includes(selectedBranchId)
+      )
+
+      if (isSessionBad || isBranchBad) {
+        setSelectedStudentId('')
+        setSelectedAdmissionId('')
+      }
+    }
+  }, [selectedSessionId, selectedBranchId, selectedProfile, selectedStudentId])
 
   // 3. Fetch Recent Payments Register
   const { data: recentPayments = [], isLoading: isLoadingPayments } = useQuery({
@@ -258,8 +343,12 @@ export const CollectFeesPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['students'] })
       queryClient.invalidateQueries({ queryKey: ['students-autocomplete'] })
       queryClient.invalidateQueries({ queryKey: ['financial-stats'] })
+      queryClient.invalidateQueries({ queryKey: ['dues'] })
+      queryClient.invalidateQueries({ queryKey: ['dues-register-all'] })
+      queryClient.invalidateQueries({ queryKey: ['student-profile'] })
       queryClient.invalidateQueries({ queryKey: ['recent-payments-register'] })
       queryClient.invalidateQueries({ queryKey: ['student-fee-profile', selectedStudentId] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
       queryClient.invalidateQueries({ queryKey: ['dashboard-analytics'] })
 
       // Reset transaction fields (preserving the updated amount for next receipt)
@@ -441,6 +530,7 @@ export const CollectFeesPage: React.FC = () => {
       paymentDate: paymentDate || undefined,
       referenceNumber: referenceNumber.trim() || undefined,
       notes: notes.trim() || undefined,
+      nextDueDate: nextDueDate || undefined,
     })
   }
 
@@ -1225,6 +1315,76 @@ export const CollectFeesPage: React.FC = () => {
                     />
                   </div>
                 </div>
+
+                {/* Next Fee Due Date for Remaining Balance */}
+                {selectedStudentId && remainingDue > (Number(amount) || 0) && (
+                  <div className="p-3 bg-blue-50/50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900/50 rounded-lg space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-semibold text-blue-950 dark:text-blue-200 flex items-center gap-1.5">
+                        <Calendar className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                        <span>Next Fee Due Date for Remaining {formatCurrency(Math.max(0, remainingDue - (Number(amount) || 0)))}</span>
+                      </label>
+                      <span className="text-[10px] text-muted-foreground">(Optional deadline)</span>
+                    </div>
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                      <Input
+                        type="date"
+                        value={nextDueDate}
+                        onChange={(e) => setNextDueDate(e.target.value)}
+                        className="text-xs h-9 bg-background flex-1"
+                      />
+                      <div className="flex items-center gap-1 flex-wrap">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const d = new Date()
+                            d.setDate(d.getDate() + 15)
+                            setNextDueDate(toInputDateString(d))
+                          }}
+                          className="h-8 text-[11px] px-2"
+                        >
+                          +15d
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const d = new Date()
+                            d.setDate(d.getDate() + 30)
+                            setNextDueDate(toInputDateString(d))
+                          }}
+                          className="h-8 text-[11px] px-2"
+                        >
+                          +30d
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            const now = new Date()
+                            const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+                            setNextDueDate(toInputDateString(lastDay))
+                          }}
+                          className="h-8 text-[11px] px-2"
+                        >
+                          Month End
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* If full payment clearing fees */}
+                {selectedStudentId && Number(amount) > 0 && remainingDue <= Number(amount) && (
+                  <div className="p-2.5 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/50 rounded-lg flex items-center gap-2 text-xs text-emerald-800 dark:text-emerald-300">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
+                    <span>This payment will clear all fees! The due date will automatically be set to blank (—) with zero overdue warnings.</span>
+                  </div>
+                )}
 
                 {/* Submit Action */}
                 <Button

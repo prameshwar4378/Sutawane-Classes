@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: sutawane-classes-software
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm install && npm run db:generate && npm run build:prod
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000

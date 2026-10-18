@@ -32,23 +32,36 @@ const photoUpload = multer({
 })
 
 // Helper function to compute installment status
-export function calculateInstallmentStatus(amountDue: number, amountPaid: number, dueDate: Date): string {
-  if (amountPaid >= amountDue && amountDue > 0) {
+export function calculateInstallmentStatus(amountDue: number, amountPaid: number, dueDate?: Date | string | null): string {
+  const due = Number(amountDue) || 0
+  const paid = Number(amountPaid) || 0
+  const balance = Math.max(0, due - paid)
+
+  // STRICT RULE: If fees/balance is cleared or 0, status is PAID and NEVER OVERDUE
+  if (balance <= 0) {
     return 'PAID'
   }
-  if (amountPaid > 0 && amountPaid < amountDue) {
+  if (paid > 0 && paid < due) {
     return 'PARTIAL'
+  }
+
+  // If no due date provided
+  if (!dueDate) {
+    return 'UPCOMING'
   }
 
   const today = new Date()
   today.setHours(0, 0, 0, 0)
-  const due = new Date(dueDate)
-  due.setHours(0, 0, 0, 0)
+  const dDate = new Date(dueDate)
+  if (isNaN(dDate.getTime())) {
+    return 'UPCOMING'
+  }
+  dDate.setHours(0, 0, 0, 0)
 
-  if (today.getTime() > due.getTime()) {
+  if (today.getTime() > dDate.getTime()) {
     return 'OVERDUE'
   }
-  if (today.getTime() === due.getTime()) {
+  if (today.getTime() === dDate.getTime()) {
     return 'DUE'
   }
   return 'UPCOMING'
@@ -173,6 +186,33 @@ studentRouter.get('/', async (req: Request, res: Response) => {
 
       const overallPendingAmount = allAdmissionsPending + prevDuesPending
 
+      // Next Due Date & Status calculation
+      let nextDueDate: string | null = null
+      let dueStatus = 'PAID'
+      if (pendingFees > 0 && feePlan?.installments && feePlan.installments.length > 0) {
+        // Find earliest unpaid installment
+        const pendingInst = feePlan.installments.find((inst) => {
+          const instPaid = (inst.allocations || []).reduce(
+            (sum: number, a: any) => (a.payment?.isReversed ? sum : sum + a.allocatedAmount),
+            0
+          )
+          return inst.amountDue > instPaid
+        }) || feePlan.installments[0]
+
+        if (pendingInst) {
+          const instPaid = (pendingInst.allocations || []).reduce(
+            (sum: number, a: any) => (a.payment?.isReversed ? sum : sum + a.allocatedAmount),
+            0
+          )
+          nextDueDate = pendingInst.dueDate.toISOString()
+          dueStatus = calculateInstallmentStatus(pendingInst.amountDue, instPaid, pendingInst.dueDate)
+        }
+      } else {
+        // All fees cleared!
+        nextDueDate = null
+        dueStatus = 'PAID'
+      }
+
       return {
         id: student.id,
         admissionId: adm.id,
@@ -198,6 +238,9 @@ studentRouter.get('/', async (req: Request, res: Response) => {
         pendingFees,
         previousDuesPending: prevDuesPending,
         overallPendingAmount,
+        dueDate: nextDueDate,
+        nextDueDate,
+        dueStatus,
         createdAt: adm.createdAt.toISOString(),
       }
     })
@@ -212,7 +255,7 @@ studentRouter.get('/', async (req: Request, res: Response) => {
 studentRouter.get('/:id', async (req: Request, res: Response) => {
   try {
     const id = String(req.params.id)
-    const { admissionId, sessionId } = req.query
+    const { admissionId, sessionId, branchId } = req.query
 
     const student = await prisma.student.findUnique({
       where: { id },
@@ -270,50 +313,76 @@ studentRouter.get('/:id', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Student not found' })
     }
 
+    // Check branch compatibility
+    let isEnrolledInBranch = true
+    if (branchId && branchId !== 'ALL') {
+      isEnrolledInBranch = student.admissions.some((a) => a.branchId === String(branchId))
+    }
+
     // Resolve target admission: either specifically requested by admissionId, or matching sessionId, or first active, or latest
-    let currentAdmission = student.admissions[0] || null
+    let currentAdmission: any = null
+    let isEnrolledInSession = true
+
     if (admissionId) {
       const match = student.admissions.find((a) => a.id === String(admissionId))
       if (match) currentAdmission = match
     } else if (sessionId && sessionId !== 'ALL') {
       const match = student.admissions.find((a) => a.sessionId === String(sessionId) && a.isActive)
         || student.admissions.find((a) => a.sessionId === String(sessionId))
-      if (match) currentAdmission = match
+      if (match) {
+        currentAdmission = match
+      } else {
+        isEnrolledInSession = false
+        currentAdmission = null
+      }
     } else {
       const active = student.admissions.find((a) => a.isActive)
-      if (active) currentAdmission = active
+      currentAdmission = active || student.admissions[0] || null
+    }
+
+    // If branchId is specified, ensure currentAdmission is from that branch if possible
+    if (branchId && branchId !== 'ALL' && currentAdmission && currentAdmission.branchId !== String(branchId)) {
+      const branchMatch = student.admissions.find(
+        (a) => a.branchId === String(branchId) && (!sessionId || sessionId === 'ALL' || a.sessionId === String(sessionId))
+      )
+      if (branchMatch) {
+        currentAdmission = branchMatch
+      }
     }
 
     const feePlan = currentAdmission?.feePlan || null
-
-    // Compute installments with status for selected admission
-    const installmentsWithStatus = feePlan?.installments.map((inst) => {
-      const paid = inst.allocations.reduce((sum, alloc) => {
-        return alloc.payment.isReversed ? sum : sum + alloc.allocatedAmount
-      }, 0)
-
-      const status = calculateInstallmentStatus(inst.amountDue, paid, inst.dueDate)
-
-      return {
-        id: inst.id,
-        installmentNo: inst.installmentNo,
-        label: inst.label,
-        dueDate: inst.dueDate.toISOString(),
-        amountDue: inst.amountDue,
-        amountPaid: paid,
-        balanceRemaining: Math.max(0, inst.amountDue - paid),
-        status,
-      }
-    }) || []
-
     const totalFees = feePlan?.totalFees || 0
     const totalDiscount = feePlan?.totalDiscount || 0
     const netPayable = feePlan?.netPayable || totalFees - totalDiscount
 
     // Authoritative session paid fees: only payments for this admission
     const sessionPayments = currentAdmission?.payments || []
-    const totalPaid = sessionPayments.reduce((acc, p) => acc + p.totalAmount, 0)
+    const totalPaid = sessionPayments.reduce((acc: number, p: any) => acc + p.totalAmount, 0)
     const totalPending = Math.max(0, netPayable - totalPaid)
+    const isFeesCleared = totalPending <= 0
+
+    // Compute installments with status for selected admission
+    const installmentsWithStatus = feePlan?.installments.map((inst: any) => {
+      const paid = inst.allocations.reduce((sum: number, alloc: any) => {
+        return alloc.payment.isReversed ? sum : sum + alloc.allocatedAmount
+      }, 0)
+
+      const balanceRemaining = Math.max(0, inst.amountDue - paid)
+      const isCleared = balanceRemaining <= 0 || isFeesCleared
+      const status = isCleared ? 'PAID' : calculateInstallmentStatus(inst.amountDue, paid, inst.dueDate)
+
+      return {
+        id: inst.id,
+        installmentNo: inst.installmentNo,
+        label: inst.label,
+        dueDate: isCleared ? null : inst.dueDate.toISOString(),
+        rawDueDate: inst.dueDate.toISOString(),
+        amountDue: inst.amountDue,
+        amountPaid: paid,
+        balanceRemaining,
+        status,
+      }
+    }) || []
 
     // Uncollected previous session dues
     const previousDuesPending = (student.previousSessionDues || []).reduce(
@@ -341,6 +410,21 @@ studentRouter.get('/:id', async (req: Request, res: Response) => {
       allAdmissionsPending += Math.max(0, aNet - aPaid)
     }
     const overallPendingAmount = allAdmissionsPending + previousDuesPending
+
+    let nextDueDate: string | null = null
+    let nextDueStatus = 'PAID'
+    if (!isFeesCleared && feePlan?.installments && feePlan.installments.length > 0) {
+      const pendingInst = feePlan.installments.find((inst: any) => {
+        const paid = inst.allocations.reduce((sum: number, alloc: any) => (alloc.payment.isReversed ? sum : sum + alloc.allocatedAmount), 0)
+        return inst.amountDue > paid
+      }) || feePlan.installments[0]
+
+      if (pendingInst) {
+        const paid = pendingInst.allocations.reduce((sum: number, alloc: any) => (alloc.payment.isReversed ? sum : sum + alloc.allocatedAmount), 0)
+        nextDueDate = pendingInst.dueDate.toISOString()
+        nextDueStatus = calculateInstallmentStatus(pendingInst.amountDue, paid, pendingInst.dueDate)
+      }
+    }
 
     res.json({
       id: student.id,
@@ -372,8 +456,13 @@ studentRouter.get('/:id', async (req: Request, res: Response) => {
         previousDuesPending,
         overallPendingAmount,
       },
+      isEnrolledInSession,
+      isEnrolledInBranch,
       previousDuesPending,
       overallPendingAmount,
+      dueDate: nextDueDate,
+      nextDueDate,
+      dueStatus: nextDueStatus,
       installments: installmentsWithStatus,
       payments: student.payments.map((p) => ({
         id: p.id,
@@ -445,6 +534,7 @@ studentRouter.post('/', async (req: Request, res: Response) => {
       totalFees,
       branchId,
       sessionId,
+      dueDate,
       customInstallments, // optional custom installment schedule array
     } = req.body
 
@@ -536,6 +626,10 @@ studentRouter.post('/', async (req: Request, res: Response) => {
       })
 
       const now = new Date()
+      // If dueDate is specified, use it; otherwise default to 30 days ahead so new students aren't instantly overdue
+      const parsedDueDate = dueDate && !isNaN(new Date(dueDate).getTime())
+        ? new Date(dueDate)
+        : new Date(Date.now() + 30 * 24 * 3600 * 1000)
 
       // If custom installments provided, use them; otherwise create 1 flexible open installment
       if (Array.isArray(customInstallments) && customInstallments.length > 0) {
@@ -544,7 +638,7 @@ studentRouter.post('/', async (req: Request, res: Response) => {
             feePlanId: feePlan.id,
             installmentNo: idx + 1,
             label: inst.label || `Installment ${idx + 1}`,
-            dueDate: new Date(inst.dueDate || now),
+            dueDate: new Date(inst.dueDate || parsedDueDate),
             amountDue: Number(inst.amountDue) || 0,
           })),
         })
@@ -555,7 +649,7 @@ studentRouter.post('/', async (req: Request, res: Response) => {
             feePlanId: feePlan.id,
             installmentNo: 1,
             label: 'Session Fee',
-            dueDate: now,
+            dueDate: parsedDueDate,
             amountDue: feesNumber,
           },
         })

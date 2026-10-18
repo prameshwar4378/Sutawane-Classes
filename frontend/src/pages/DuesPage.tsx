@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import { useApp } from '@/context/AppContext'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
@@ -86,14 +86,36 @@ export const DuesPage: React.FC = () => {
     activeLogoUrl,
   } = useApp()
 
+  const queryClient = useQueryClient()
+
   // Modals & UI States
   const [isColumnModalOpen, setIsColumnModalOpen] = useState(false)
   const [toastMsg, setToastMsg] = useState('')
+  const [editingDueItem, setEditingDueItem] = useState<any>(null)
+  const [editDueDateInput, setEditDueDateInput] = useState<string>('')
 
   const showToast = (msg: string) => {
     setToastMsg(msg)
     setTimeout(() => setToastMsg(''), 4500)
   }
+
+  // Update Due Date mutation
+  const updateDueDateMutation = useMutation({
+    mutationFn: (data: { installmentId: string; dueDate: string }) =>
+      api.patch(`/fees/installments/${data.installmentId}/due-date`, { dueDate: data.dueDate }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['dues-register-all'] })
+      queryClient.invalidateQueries({ queryKey: ['students'] })
+      queryClient.invalidateQueries({ queryKey: ['financial-stats'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard-analytics'] })
+      setEditingDueItem(null)
+      showToast('Fee due date updated successfully!')
+    },
+    onError: (err: any) => {
+      showToast(err.message || 'Failed to update due date')
+    },
+  })
 
   // Column Visibility state persisted in localStorage
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(() => {
@@ -1267,7 +1289,7 @@ export const DuesPage: React.FC = () => {
                         {/* Due Date */}
                         {visibleColumns.dueDate && (
                           <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
-                            {formatDateLong(d.dueDate)}
+                            {d.balanceRemaining <= 0 || !d.dueDate ? '—' : formatDateLong(d.dueDate)}
                           </TableCell>
                         )}
 
@@ -1327,6 +1349,19 @@ export const DuesPage: React.FC = () => {
                         {visibleColumns.actions && (
                           <TableCell className="text-right whitespace-nowrap pr-4">
                             <div className="flex items-center justify-end gap-1.5">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setEditingDueItem(d)
+                                  setEditDueDateInput(toInputDateString(d.dueDate))
+                                }}
+                                title="Change Fee Due Date"
+                                className="h-7 gap-1 text-xs border-primary/40 text-primary hover:bg-primary/10 px-2"
+                              >
+                                <Calendar className="w-3.5 h-3.5" />
+                                <span className="hidden md:inline">Due Date</span>
+                              </Button>
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -1452,6 +1487,149 @@ export const DuesPage: React.FC = () => {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Quick Edit Due Date Modal */}
+      <Dialog open={Boolean(editingDueItem)} onOpenChange={(open) => !open && setEditingDueItem(null)}>
+        <DialogContent className="max-w-md">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              if (!editingDueItem || !editDueDateInput) return
+              updateDueDateMutation.mutate({
+                installmentId: editingDueItem.id,
+                dueDate: editDueDateInput,
+              })
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-base">
+                <Calendar className="w-4 h-4 text-primary" />
+                <span>Change Fee Due Date</span>
+              </DialogTitle>
+            </DialogHeader>
+
+            <div className="space-y-4 py-4 text-xs">
+              <div className="p-3 rounded-lg bg-muted/40 border space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Student:</span>
+                  <span className="font-semibold text-foreground">{editingDueItem?.student?.fullName}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Roll No / Class:</span>
+                  <span className="font-medium text-foreground">
+                    {editingDueItem?.student?.rollNumber} • {editingDueItem?.student?.standard}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Pending Balance:</span>
+                  <span className="font-bold text-rose-600">
+                    {formatCurrency(editingDueItem?.balanceRemaining || 0)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-semibold text-foreground block">
+                  Select New Due Date *
+                </label>
+                <Input
+                  type="date"
+                  value={editDueDateInput}
+                  onChange={(e) => setEditDueDateInput(e.target.value)}
+                  className="h-10 text-sm font-medium"
+                  required
+                />
+              </div>
+
+              {/* Quick Presets */}
+              <div className="space-y-1.5">
+                <span className="text-[11px] font-medium text-muted-foreground block">
+                  Quick Date Presets:
+                </span>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const d = new Date()
+                      d.setDate(d.getDate() + 7)
+                      setEditDueDateInput(toInputDateString(d))
+                    }}
+                    className="h-7 text-[11px] px-2.5"
+                  >
+                    +7 Days
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const d = new Date()
+                      d.setDate(d.getDate() + 15)
+                      setEditDueDateInput(toInputDateString(d))
+                    }}
+                    className="h-7 text-[11px] px-2.5"
+                  >
+                    +15 Days
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const d = new Date()
+                      d.setDate(d.getDate() + 30)
+                      setEditDueDateInput(toInputDateString(d))
+                    }}
+                    className="h-7 text-[11px] px-2.5"
+                  >
+                    +30 Days
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const now = new Date()
+                      const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+                      setEditDueDateInput(toInputDateString(lastDay))
+                    }}
+                    className="h-7 text-[11px] px-2.5"
+                  >
+                    End of Month
+                  </Button>
+                </div>
+              </div>
+
+              <p className="text-[11px] text-muted-foreground italic">
+                When all fees are paid, this due date will automatically be blank (—) and won't trigger any overdue alerts.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setEditingDueItem(null)}
+                disabled={updateDueDateMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={updateDueDateMutation.isPending}
+                className="gap-1.5 bg-primary text-primary-foreground font-semibold"
+              >
+                <Calendar className="w-3.5 h-3.5" />
+                {updateDueDateMutation.isPending ? 'Saving...' : 'Update Due Date'}
+              </Button>
+            </div>
+          </form>
         </DialogContent>
       </Dialog>
     </div>

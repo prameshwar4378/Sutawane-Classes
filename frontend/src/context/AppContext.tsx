@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useMemo } from 'react'
+import React, { createContext, useContext, useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/api/client'
 
@@ -52,11 +52,38 @@ export interface Course {
   updatedAt?: string
 }
 
+export interface ContextGuard {
+  id: string
+  entityTitle: string
+  canChangeBranch?: (targetBranchId: string | 'ALL') => { allowed: boolean; reason?: string }
+  canChangeSession?: (targetSessionId: string | 'ALL') => { allowed: boolean; reason?: string }
+}
+
+export interface IncompatibleActionModalState {
+  isOpen: boolean
+  changeType: 'branch' | 'session'
+  targetId: string | 'ALL'
+  targetLabel: string
+  entityTitle: string
+  reason: string
+}
+
 interface AppContextType {
   selectedBranchId: string | 'ALL'
   setSelectedBranchId: (id: string | 'ALL') => void
   selectedSessionId: string | 'ALL' | null
   setSelectedSessionId: (id: string | 'ALL') => void
+  contextGuard: ContextGuard | null
+  registerContextGuard: (guard: ContextGuard | null) => void
+  incompatibleModal: IncompatibleActionModalState | null
+  setIncompatibleModal: React.Dispatch<React.SetStateAction<IncompatibleActionModalState | null>>
+  closeIncompatibleModal: () => void
+  requestBranchChange: (id: string | 'ALL') => boolean
+  requestSessionChange: (id: string | 'ALL') => boolean
+  confirmIncompatibleSwitch: (
+    action: 'stay' | 'dashboard' | 'directory',
+    navigate?: (path: string) => void
+  ) => void
   branches: Branch[]
   sessions: AcademicSession[]
   courses: Course[]
@@ -86,6 +113,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return (localStorage.getItem('sutawane_selected_session') as string | 'ALL') || null
   })
 
+  const contextGuardRef = useRef<ContextGuard | null>(null)
+  const [incompatibleModal, setIncompatibleModal] = useState<IncompatibleActionModalState | null>(null)
+
   const [isSidebarCollapsed, setIsSidebarCollapsedState] = useState<boolean>(() => {
     return localStorage.getItem('sutawane_sidebar_collapsed') === 'true'
   })
@@ -98,6 +128,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const setSelectedSessionId = (id: string | 'ALL') => {
     setSelectedSessionIdState(id)
     localStorage.setItem('sutawane_selected_session', id)
+  }
+
+  const registerContextGuard = useCallback((guard: ContextGuard | null) => {
+    contextGuardRef.current = guard
+  }, [])
+
+  const closeIncompatibleModal = () => {
+    setIncompatibleModal(null)
   }
 
   const setIsSidebarCollapsed = (collapsed: boolean) => {
@@ -203,6 +241,80 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return settings?.logo_url || null
   }, [selectedBranchId, currentBranch, settings])
 
+  const requestBranchChange = (id: string | 'ALL'): boolean => {
+    const guard = contextGuardRef.current
+    if (guard?.canChangeBranch) {
+      const check = guard.canChangeBranch(id)
+      if (!check.allowed) {
+        const targetLabel = id === 'ALL'
+          ? 'All Branches (Consolidated)'
+          : branches.find((b) => b.id === id)?.name || id
+        setIncompatibleModal({
+          isOpen: true,
+          changeType: 'branch',
+          targetId: id,
+          targetLabel,
+          entityTitle: guard.entityTitle,
+          reason: check.reason || `This record is not available in ${targetLabel}.`,
+        })
+        return false // Change is DECLINED!
+      }
+    }
+    setSelectedBranchId(id)
+    return true
+  }
+
+  const requestSessionChange = (id: string | 'ALL'): boolean => {
+    const guard = contextGuardRef.current
+    if (guard?.canChangeSession) {
+      const check = guard.canChangeSession(id)
+      if (!check.allowed) {
+        const targetLabel = id === 'ALL'
+          ? 'All Academic Sessions (Consolidated)'
+          : sessions.find((s) => s.id === id)?.displayName || sessions.find((s) => s.id === id)?.name || id
+        setIncompatibleModal({
+          isOpen: true,
+          changeType: 'session',
+          targetId: id,
+          targetLabel,
+          entityTitle: guard.entityTitle,
+          reason: check.reason || `This record is not available in ${targetLabel}.`,
+        })
+        return false // Change is DECLINED!
+      }
+    }
+    setSelectedSessionId(id)
+    return true
+  }
+
+  const confirmIncompatibleSwitch = (
+    action: 'stay' | 'dashboard' | 'directory',
+    navigate?: (path: string) => void
+  ) => {
+    if (!incompatibleModal) return
+
+    if (action === 'stay') {
+      setIncompatibleModal(null)
+      return
+    }
+
+    const { changeType, targetId } = incompatibleModal
+    if (changeType === 'branch') {
+      setSelectedBranchId(targetId)
+    } else {
+      setSelectedSessionId(targetId)
+    }
+
+    contextGuardRef.current = null
+    setIncompatibleModal(null)
+
+    if (action === 'dashboard' && navigate) {
+      navigate('/')
+    } else if (action === 'directory' && navigate) {
+      navigate('/students')
+    }
+  }
+
   const refetchMeta = () => {
     refetchBranches()
     refetchSessions()
@@ -217,6 +329,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setSelectedBranchId,
         selectedSessionId,
         setSelectedSessionId,
+        contextGuard: contextGuardRef.current,
+        registerContextGuard,
+        incompatibleModal,
+        setIncompatibleModal,
+        closeIncompatibleModal,
+        requestBranchChange,
+        requestSessionChange,
+        confirmIncompatibleSwitch,
         branches,
         sessions,
         courses,

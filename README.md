@@ -1,6 +1,23 @@
 # Sutawane Classes Management System
 
-A desktop management software designed for **Sutawane Classes** to manage 5–6 coaching branches, student admissions, installment fees, branch overhead expenses, and financial reports.
+Developed by **Ultoxy Technologies** for **Sutawane Classes**.
+
+[![GitHub Repository](https://img.shields.io/badge/GitHub-Repository-blue?logo=github)](https://github.com/prameshwar4378/Sutawane-Classes)
+[![Live Web Application](https://img.shields.io/badge/Live_Deployment-GitHub_Pages-brightgreen?logo=githubpages)](https://prameshwar4378.github.io/Sutawane-Classes/)
+[![Desktop Application](https://img.shields.io/badge/Windows_Setup-1.0.0_Signed-purple?logo=windows)](https://github.com/prameshwar4378/Sutawane-Classes/releases)
+
+### 🌐 Live Production Links
+- **GitHub Repository:** [https://github.com/prameshwar4378/Sutawane-Classes](https://github.com/prameshwar4378/Sutawane-Classes)
+- **Live Web Production Preview:** [https://prameshwar4378.github.io/Sutawane-Classes/](https://prameshwar4378.github.io/Sutawane-Classes/)
+- **Production Windows Desktop Installer:** Signed setup package (`release/Sutawane Classes Management Software Setup 1.0.0.exe`) signed by **Ultoxy Technologies**.
+
+---
+
+### 🔐 Default Credentials
+- **Role:** Administrator
+- **Username:** `sutawane`
+- **Password:** `sutawane@123`
+- **Developer Portal Access:** Secure OTP verification via `prameshwar4378@gmail.com`
 
 ---
 

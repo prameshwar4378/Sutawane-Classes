@@ -1,7 +1,9 @@
 {
-  "name": "sutawane-classes-management-system",
+  "name": "sutawane-classes-management-software",
   "version": "1.0.0",
-  "description": "Comprehensive Management System for Sutawane Classes",
+  "description": "Sutawane Classes Management Software - Professional Coaching Institute & Student Fee Accounting System developed by Ultoxy Technologies",
+  "author": "Ultoxy Technologies <support@ultoxy.com>",
+  "copyright": "Copyright © 2026 Ultoxy Technologies. All rights reserved.",
   "private": true,
   "main": "dist/electron/main.js",
   "workspaces": [
@@ -17,21 +19,26 @@
     "build:shared": "npm run build -w shared",
     "build:backend": "npm run build -w backend",
     "build:frontend": "npm run build -w frontend",
+    "build:prod": "npm run build:shared && npm run build:backend && npm run build:frontend",
     "build": "npm run build:shared && npm run build:backend && npm run build:frontend && npm run electron:build-ts",
-    "test": "vitest run --dir backend/tests",
+    "start": "node backend/dist/index.js",
+    "test": "vitest run --fileParallelism=false --dir backend/tests",
     "test:db": "npm run test -w backend",
     "test:frontend": "npm run test -w frontend",
     "db:generate": "npm run prisma:generate -w backend",
     "db:push": "npm run prisma:push -w backend",
     "db:migrate": "npm run prisma:migrate -w backend",
     "db:studio": "npm run prisma:studio -w backend",
-    "package:win": "npm run build && electron-builder --win"
+    "package:win": "npm run build && electron-builder --win",
+    "package:sign": "npm run package:win && powershell -ExecutionPolicy Bypass -File build/create-cert-and-sign.ps1"
   },
   "build": {
-    "appId": "com.sutawane.classes",
-    "productName": "Sutawane Classes Management System",
+    "appId": "com.ultoxy.sutawaneclasses",
+    "productName": "Sutawane Classes Management Software",
+    "copyright": "Copyright © 2026 Ultoxy Technologies. All rights reserved.",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
     "files": [
       "dist/electron/**/*",
@@ -39,17 +46,58 @@
       "frontend/dist/**/*",
       "shared/dist/**/*",
       "backend/prisma/**/*",
-      "node_modules/**/*"
+      "!**/node_modules/*/{CHANGELOG.md,README.md,README,test,tests,example,examples}",
+      "!**/node_modules/*/__tests__/**"
+    ],
+    "extraResources": [
+      {
+        "from": "backend/prisma/template.db",
+        "to": "backend/prisma/template.db"
+      },
+      {
+        "from": "backend/prisma/logo-master.png",
+        "to": "backend/prisma/logo-master.png"
+      },
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
+      }
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "**/node_modules/@prisma/**",
+      "**/node_modules/.prisma/**"
     ],
     "win": {
       "target": [
-        "nsis"
-      ]
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "legalTrademarks": "Ultoxy Technologies",
+      "publisherName": [
+        "Ultoxy Technologies"
+      ],
+      "requestedExecutionLevel": "asInvoker"
     },
     "nsis": {
       "oneClick": false,
+      "perMachine": false,
       "allowToChangeInstallationDirectory": true,
-      "shortcutName": "Sutawane Classes"
+      "allowElevation": false,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "Sutawane Classes",
+      "uninstallDisplayName": "Sutawane Classes Management Software - Ultoxy Technologies",
+      "deleteAppDataOnUninstall": false,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "runAfterFinish": true
     }
   },
   "devDependencies": {

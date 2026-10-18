@@ -147,3 +147,73 @@ settingRouter.delete('/logo', async (_req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to delete master logo', details: String(error) })
   }
 })
+
+// POST reset all transactional data (Factory Reset - preserves users, login credentials & master settings)
+settingRouter.post('/reset-all-data', async (_req: Request, res: Response) => {
+  try {
+    // 1. Delete all student & fee transaction records in cascade-safe order
+    await prisma.paymentAllocation.deleteMany({})
+    await prisma.payment.deleteMany({})
+    await prisma.receiptCounter.deleteMany({})
+    await prisma.installment.deleteMany({})
+    await prisma.feeDiscount.deleteMany({})
+    await prisma.feePlan.deleteMany({})
+    await prisma.previousSessionDue.deleteMany({})
+    await prisma.studentAdmission.deleteMany({})
+    await prisma.student.deleteMany({})
+
+    // 2. Delete all expense records and attachments
+    await prisma.expenseAttachment.deleteMany({})
+    await prisma.expense.deleteMany({})
+
+    // 3. Delete health logs
+    await prisma.healthLog.deleteMany({})
+
+    // 4. Clean up uploaded photos and attachments files on disk (preserving logo)
+    if (fs.existsSync(storagePaths.photosDir)) {
+      const photoFiles = fs.readdirSync(storagePaths.photosDir)
+      for (const f of photoFiles) {
+        if (f !== '.gitkeep' && !f.startsWith('logo-')) {
+          try {
+            fs.unlinkSync(path.join(storagePaths.photosDir, f))
+          } catch {}
+        }
+      }
+    }
+
+    if (fs.existsSync(storagePaths.attachmentsDir)) {
+      const attachmentFiles = fs.readdirSync(storagePaths.attachmentsDir)
+      for (const f of attachmentFiles) {
+        if (f !== '.gitkeep') {
+          try {
+            fs.unlinkSync(path.join(storagePaths.attachmentsDir, f))
+          } catch {}
+        }
+      }
+    }
+
+    // 5. Initialize clean ReceiptCounter for active branches and sessions
+    const activeBranches = await prisma.branch.findMany({ where: { isActive: true } })
+    const activeSessions = await prisma.academicSession.findMany({ where: { isActive: true } })
+    for (const b of activeBranches) {
+      for (const s of activeSessions) {
+        const prefix = `${b.code}-${s.name}`
+        await prisma.receiptCounter.upsert({
+          where: { branchId_sessionId: { branchId: b.id, sessionId: s.id } },
+          update: { lastNumber: 0, prefix },
+          create: { branchId: b.id, sessionId: s.id, prefix, lastNumber: 0 },
+        })
+      }
+    }
+
+    // NOTE: User accounts (login credentials), branches, sessions, courses, and system settings are strictly KEPT AS IS!
+
+    res.json({
+      success: true,
+      message: 'All transactional data, students, fees, and expenses deleted successfully. User accounts, credentials, and master settings have been preserved.',
+    })
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to reset all data', details: String(error) })
+  }
+})
+

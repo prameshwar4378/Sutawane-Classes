@@ -91,10 +91,32 @@ export function createApp(): Application {
     }
   })
 
-  // Global 404 handler
+  // Global API 404 handler
   app.use('/api/*', (_req: Request, res: Response) => {
     res.status(404).json({ error: 'Endpoint not found' })
   })
+
+  // Serve Frontend Production Assets (Single Page Application Fallback)
+  const resourcesPath = (process as any).resourcesPath || ''
+  const candidateFrontendDirs = [
+    path.resolve(__dirname, '../../frontend/dist'),
+    path.resolve(__dirname, '../../../frontend/dist'),
+    path.resolve(resourcesPath, 'frontend/dist'),
+    path.resolve(resourcesPath, 'app.asar/frontend/dist'),
+  ]
+  const frontendDistPath = candidateFrontendDirs.find(
+    (d) => d && fs.existsSync(d) && fs.existsSync(path.join(d, 'index.html'))
+  )
+
+  if (frontendDistPath) {
+    app.use(express.static(frontendDistPath))
+    app.get('*', (req: Request, res: Response, next: NextFunction) => {
+      if (req.path.startsWith('/api')) {
+        return next()
+      }
+      res.sendFile(path.join(frontendDistPath, 'index.html'))
+    })
+  }
 
   // Global Error Handler
   app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {

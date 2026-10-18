@@ -884,7 +884,7 @@ export const ReportsPage: React.FC = () => {
                   <p className="text-xs text-muted-foreground leading-relaxed">
                     Combines <strong>Total Collections</strong>, <strong>Total Expenses</strong>,{' '}
                     <strong>Net Profit/Loss</strong>, and <strong>Full Transaction Ledgers</strong> in one single report.
-                    Quickly toggle between Daily, Monthly, or Custom Date filters with official A4 print and CSV exports.
+                    Quickly toggle between Daily, Monthly, or Custom Date filters with official A4 print and multi-sheet Excel (.xlsx) exports.
                   </p>
                 </div>
 

@@ -62,7 +62,7 @@ import {
   Trash2,
   AlertTriangle,
 } from 'lucide-react'
-import { formatCurrency, formatDate } from '@/lib/utils'
+import { formatCurrency, formatDate, toInputDateString, formatDateLong } from '@/lib/utils'
 import { exportStudentsToExcel, exportStudentsToPDF, PDF_EXPORT_COLUMNS } from '@/lib/exportUtils'
 import { PromoteStudentModal } from '@/components/PromoteStudentModal'
 import { BatchPromoteModal } from '@/components/BatchPromoteModal'
@@ -84,6 +84,7 @@ const ALL_COLUMNS: ColumnDef[] = [
   { id: 'standard', label: 'Class / Course', defaultVisible: true },
   { id: 'branch', label: 'Branch Location', defaultVisible: true },
   { id: 'session', label: 'Academic Session', defaultVisible: false },
+  { id: 'dueDate', label: 'Fee Due Date', defaultVisible: true },
   { id: 'parentPhone', label: 'Parent Mobile', defaultVisible: true },
   { id: 'studentPhone', label: 'Student Mobile', defaultVisible: false },
   { id: 'totalFees', label: 'Session Total Fees', defaultVisible: true },
@@ -119,10 +120,10 @@ export const StudentsPage: React.FC = () => {
   useEffect(() => {
     if (location.state?.toast) {
       setToastMsg(location.state.toast)
-      window.history.replaceState({}, document.title)
+      navigate(location.pathname + location.search, { replace: true, state: {} })
       setTimeout(() => setToastMsg(''), 4500)
     }
-  }, [location.state])
+  }, [location.state, location.pathname, location.search, navigate])
 
   // Promotion States
   const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -176,6 +177,7 @@ export const StudentsPage: React.FC = () => {
   const [studentPhone, setStudentPhone] = useState('')
   const [address, setAddress] = useState('')
   const [totalFees, setTotalFees] = useState('25000')
+  const [admissionDueDate, setAdmissionDueDate] = useState('')
   const [formError, setFormError] = useState('')
 
   // Compute active sessionId for backend query
@@ -549,6 +551,9 @@ export const StudentsPage: React.FC = () => {
     setStudentPhone('')
     setAddress('')
     setTotalFees(defaultCourse?.defaultFee ? String(defaultCourse.defaultFee) : '25000')
+    const initialDue = new Date()
+    initialDue.setDate(initialDue.getDate() + 30)
+    setAdmissionDueDate(toInputDateString(initialDue))
     setFormError('')
     setIsDialogOpen(true)
   }
@@ -584,6 +589,7 @@ export const StudentsPage: React.FC = () => {
       studentPhone: studentPhone.trim() || undefined,
       address: address.trim() || undefined,
       totalFees: Number(totalFees) || 0,
+      dueDate: admissionDueDate || undefined,
     })
   }
 
@@ -1114,6 +1120,19 @@ export const StudentsPage: React.FC = () => {
                     {/* Academic Session Column */}
                     {visibleColumns.session && <TableHead className="whitespace-nowrap text-white">Session</TableHead>}
 
+                    {/* Fee Due Date Column */}
+                    {visibleColumns.dueDate && (
+                      <TableHead
+                        onClick={() => handleSort('dueDate')}
+                        className="cursor-pointer hover:text-white hover:bg-[#1f2c4a] text-center whitespace-nowrap select-none text-white group"
+                      >
+                        <div className="flex items-center justify-center gap-1 text-white">
+                          <span>Fee Due Date</span>
+                          {renderSortIcon('dueDate')}
+                        </div>
+                      </TableHead>
+                    )}
+
                     {/* Parent Phone Column */}
                     {visibleColumns.parentPhone && <TableHead className="whitespace-nowrap text-white">Parent Phone</TableHead>}
 
@@ -1266,6 +1285,17 @@ export const StudentsPage: React.FC = () => {
                         {visibleColumns.session && (
                           <TableCell className="text-xs text-muted-foreground whitespace-nowrap font-mono">
                             {s.sessionName}
+                          </TableCell>
+                        )}
+
+                        {/* Fee Due Date */}
+                        {visibleColumns.dueDate && (
+                          <TableCell className="text-xs text-center text-muted-foreground whitespace-nowrap font-mono">
+                            {s.pendingFees <= 0 || !s.dueDate ? (
+                              <span className="font-sans font-medium text-emerald-600 dark:text-emerald-400">—</span>
+                            ) : (
+                              formatDate(s.dueDate)
+                            )}
                           </TableCell>
                         )}
 
@@ -1786,22 +1816,33 @@ export const StudentsPage: React.FC = () => {
                 </div>
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold flex items-center justify-between">
-                  <span>Agreed Total Fees (₹) *</span>
-                  <span className="text-[10px] text-emerald-600 font-medium">
-                    Flexible payment (pay any amount, anytime)
-                  </span>
-                </label>
-                <Input
-                  type="number"
-                  value={totalFees}
-                  onChange={(e) => setTotalFees(e.target.value)}
-                  min={0}
-                  step={500}
-                  required
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold">Agreed Total Fees (₹) *</label>
+                  <Input
+                    type="number"
+                    value={totalFees}
+                    onChange={(e) => setTotalFees(e.target.value)}
+                    min={0}
+                    step={500}
+                    required
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold flex items-center justify-between">
+                    <span>Fee Due Date</span>
+                    <span className="text-[10px] text-muted-foreground">(Optional)</span>
+                  </label>
+                  <Input
+                    type="date"
+                    value={admissionDueDate}
+                    onChange={(e) => setAdmissionDueDate(e.target.value)}
+                  />
+                </div>
               </div>
+              <p className="text-[10px] text-muted-foreground -mt-2">
+                Flexible payment active. When all fees are cleared, due dates automatically become blank (—) with zero overdue warnings.
+              </p>
 
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold">Address</label>

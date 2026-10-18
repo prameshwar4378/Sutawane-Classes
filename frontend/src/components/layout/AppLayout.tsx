@@ -4,6 +4,7 @@ import { Sidebar } from './Sidebar'
 import { Header } from './Header'
 import { useAuth } from '@/context/AuthContext'
 import { SoftwareLockScreen } from '@/components/SoftwareLockScreen'
+import { IncompatibleActionModal } from '@/components/IncompatibleActionModal'
 
 export const AppLayout: React.FC = () => {
   const { isClassOwner, license } = useAuth()
@@ -14,6 +15,7 @@ export const AppLayout: React.FC = () => {
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-background font-sans antialiased text-foreground">
       {isLocked && <SoftwareLockScreen />}
+      <IncompatibleActionModal />
 
       {/* Permanent Fixed Left Sidebar */}
       <Sidebar />

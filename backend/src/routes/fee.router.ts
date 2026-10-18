@@ -95,23 +95,44 @@ feeRouter.get('/plans/:admissionId', async (req: Request, res: Response) => {
     )
     const overallPendingAmount = totalPending + previousDuesPending
 
+    const isFeesCleared = totalPending <= 0
+
     const installments = feePlan.installments.map((inst) => {
       const paid = inst.allocations.reduce((sum, a) => {
         return a.payment.isReversed ? sum : sum + a.allocatedAmount
       }, 0)
-      const status = calculateInstallmentStatus(inst.amountDue, paid, inst.dueDate)
+      const balanceRemaining = Math.max(0, inst.amountDue - paid)
+      const isCleared = balanceRemaining <= 0 || isFeesCleared
+      const status = isCleared ? 'PAID' : calculateInstallmentStatus(inst.amountDue, paid, inst.dueDate)
 
       return {
         id: inst.id,
         installmentNo: inst.installmentNo,
         label: inst.label,
-        dueDate: inst.dueDate.toISOString(),
+        dueDate: isCleared ? null : inst.dueDate.toISOString(),
+        rawDueDate: inst.dueDate.toISOString(),
         amountDue: inst.amountDue,
         amountPaid: paid,
-        balanceRemaining: Math.max(0, inst.amountDue - paid),
+        balanceRemaining,
         status,
       }
     })
+
+    let nextDueDate: string | null = null
+    let dueStatus = 'PAID'
+    if (!isFeesCleared && feePlan.installments && feePlan.installments.length > 0) {
+      const pendingInst =
+        feePlan.installments.find((inst) => {
+          const paid = inst.allocations.reduce((sum, a) => (a.payment.isReversed ? sum : sum + a.allocatedAmount), 0)
+          return inst.amountDue > paid
+        }) || feePlan.installments[0]
+
+      if (pendingInst) {
+        const paid = pendingInst.allocations.reduce((sum, a) => (a.payment.isReversed ? sum : sum + a.allocatedAmount), 0)
+        nextDueDate = pendingInst.dueDate.toISOString()
+        dueStatus = calculateInstallmentStatus(pendingInst.amountDue, paid, pendingInst.dueDate)
+      }
+    }
 
     res.json({
       id: feePlan.id,
@@ -124,6 +145,9 @@ feeRouter.get('/plans/:admissionId', async (req: Request, res: Response) => {
       totalPending,
       previousDuesPending,
       overallPendingAmount,
+      dueDate: nextDueDate,
+      nextDueDate,
+      dueStatus,
       student: {
         id: student.id,
         fullName: student.fullName,
@@ -309,6 +333,7 @@ feeRouter.post('/payments', async (req: Request, res: Response) => {
       receiptNumber,
       referenceNumber,
       notes,
+      nextDueDate, // optional next fee due date promise
       allowDuplicate = false,
       allocations, // optional array: [{ installmentId, allocatedAmount }]
     } = req.body
@@ -555,6 +580,28 @@ feeRouter.post('/payments', async (req: Request, res: Response) => {
             }
           }
         }
+
+        // If nextDueDate was specified and balance remains, update the active/next installment's dueDate
+        if (nextDueDate && pendingDue - numAmount > 0) {
+          const parsedNextDue = new Date(nextDueDate)
+          if (!isNaN(parsedNextDue.getTime())) {
+            const targetInst =
+              feePlan.installments.find((inst: any) => {
+                const paidSoFar = inst.allocations.reduce(
+                  (sum: number, a: any) => (a.payment.isReversed ? sum : sum + a.allocatedAmount),
+                  0
+                )
+                return inst.amountDue > paidSoFar
+              }) || feePlan.installments[feePlan.installments.length - 1]
+
+            if (targetInst) {
+              await tx.installment.update({
+                where: { id: targetInst.id },
+                data: { dueDate: parsedNextDue },
+              })
+            }
+          }
+        }
       }
 
       return newPayment
@@ -764,13 +811,15 @@ feeRouter.get('/dues', async (req: Request, res: Response) => {
           return a.payment.isReversed ? sum : sum + a.allocatedAmount
         }, 0)
         const balance = Math.max(0, inst.amountDue - paid)
-        const computedStatus = calculateInstallmentStatus(inst.amountDue, paid, inst.dueDate)
+        const isCleared = balance <= 0
+        const computedStatus = isCleared ? 'PAID' : calculateInstallmentStatus(inst.amountDue, paid, inst.dueDate)
 
         return {
           id: inst.id,
           installmentNo: inst.installmentNo,
           label: inst.label,
-          dueDate: inst.dueDate.toISOString(),
+          dueDate: isCleared ? null : inst.dueDate.toISOString(),
+          rawDueDate: inst.dueDate.toISOString(),
           amountDue: inst.amountDue,
           amountPaid: paid,
           balanceRemaining: balance,
@@ -792,7 +841,9 @@ feeRouter.get('/dues', async (req: Request, res: Response) => {
         }
       })
       .filter((item) => {
-        if (!status || status === 'ALL') return item.balanceRemaining > 0
+        // STRICT RULE: Cleared / 0 balance students MUST NEVER appear in dues register or overdue filters
+        if (item.balanceRemaining <= 0) return false
+        if (!status || status === 'ALL') return true
         return item.status === status
       })
 
@@ -801,3 +852,145 @@ feeRouter.get('/dues', async (req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to fetch dues register', details: String(error) })
   }
 })
+
+// PATCH update due date of a specific installment
+feeRouter.patch('/installments/:id/due-date', async (req: Request, res: Response) => {
+  try {
+    const id = String(req.params.id)
+    const { dueDate } = req.body
+    if (!dueDate) {
+      return res.status(400).json({ error: 'Valid dueDate is required' })
+    }
+    const parsedDate = new Date(dueDate)
+    if (isNaN(parsedDate.getTime())) {
+      return res.status(400).json({ error: 'Invalid date format' })
+    }
+
+    const installment = await prisma.installment.update({
+      where: { id },
+      data: { dueDate: parsedDate },
+      include: {
+        allocations: {
+          include: { payment: true },
+        },
+      },
+    })
+
+    const paid = installment.allocations.reduce((sum, a) => {
+      return a.payment.isReversed ? sum : sum + a.allocatedAmount
+    }, 0)
+    const balanceRemaining = Math.max(0, installment.amountDue - paid)
+    const status = calculateInstallmentStatus(installment.amountDue, paid, installment.dueDate)
+
+    res.json({
+      success: true,
+      installment: {
+        id: installment.id,
+        installmentNo: installment.installmentNo,
+        label: installment.label,
+        dueDate: balanceRemaining <= 0 ? null : installment.dueDate.toISOString(),
+        rawDueDate: installment.dueDate.toISOString(),
+        amountDue: installment.amountDue,
+        amountPaid: paid,
+        balanceRemaining,
+        status: balanceRemaining <= 0 ? 'PAID' : status,
+      },
+    })
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to update due date' })
+  }
+})
+
+// POST or PATCH update due date for a student by studentId
+const updateStudentDueDateHandler = async (req: Request, res: Response) => {
+  try {
+    const studentId = String(req.params.studentId)
+    const { dueDate, admissionId, installmentId } = req.body
+    if (!dueDate) {
+      return res.status(400).json({ error: 'Valid dueDate is required' })
+    }
+    const parsedDate = new Date(dueDate)
+    if (isNaN(parsedDate.getTime())) {
+      return res.status(400).json({ error: 'Invalid date format' })
+    }
+
+    // If specific installmentId provided, update directly
+    if (installmentId) {
+      const updatedInst = await prisma.installment.update({
+        where: { id: String(installmentId) },
+        data: { dueDate: parsedDate },
+      })
+      return res.json({ success: true, dueDate: updatedInst.dueDate.toISOString(), installment: updatedInst })
+    }
+
+    // Find admission & feePlan
+    let admission = null
+    if (admissionId) {
+      admission = await prisma.studentAdmission.findUnique({
+        where: { id: String(admissionId) },
+        include: {
+          feePlan: {
+            include: {
+              installments: {
+                include: { allocations: { include: { payment: true } } },
+                orderBy: { installmentNo: 'asc' },
+              },
+            },
+          },
+        },
+      })
+    } else {
+      admission = await prisma.studentAdmission.findFirst({
+        where: { studentId, isActive: true },
+        orderBy: { createdAt: 'desc' },
+        include: {
+          feePlan: {
+            include: {
+              installments: {
+                include: { allocations: { include: { payment: true } } },
+                orderBy: { installmentNo: 'asc' },
+              },
+            },
+          },
+        },
+      })
+    }
+
+    if (!admission || !admission.feePlan) {
+      return res.status(404).json({ error: 'Admission or Fee Plan not found for student' })
+    }
+
+    const feePlan = admission.feePlan
+    if (feePlan.installments && feePlan.installments.length > 0) {
+      // Find the first unpaid installment, or fallback to the latest
+      const targetInst =
+        feePlan.installments.find((inst) => {
+          const paid = inst.allocations.reduce((sum, a) => (a.payment.isReversed ? sum : sum + a.allocatedAmount), 0)
+          return inst.amountDue > paid
+        }) || feePlan.installments[feePlan.installments.length - 1]
+
+      const updated = await prisma.installment.update({
+        where: { id: targetInst.id },
+        data: { dueDate: parsedDate },
+      })
+      return res.json({ success: true, dueDate: updated.dueDate.toISOString(), installment: updated })
+    } else {
+      // Create new installment
+      const newInst = await prisma.installment.create({
+        data: {
+          feePlanId: feePlan.id,
+          installmentNo: 1,
+          label: 'Session Fee',
+          dueDate: parsedDate,
+          amountDue: feePlan.netPayable,
+        },
+      })
+      return res.json({ success: true, dueDate: newInst.dueDate.toISOString(), installment: newInst })
+    }
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to update student due date' })
+  }
+}
+
+feeRouter.post('/student/:studentId/due-date', updateStudentDueDateHandler)
+feeRouter.patch('/student/:studentId/due-date', updateStudentDueDateHandler)

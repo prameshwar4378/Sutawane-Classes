@@ -7,6 +7,16 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import {
   Settings,
   Save,
   CheckCircle2,
@@ -110,6 +120,24 @@ export const SettingsPage: React.FC = () => {
     },
     onError: (err: any) => {
       setErrorMsg(err.message || 'Failed to remove master logo')
+    },
+  })
+
+  // Factory Data Wipe Mutation
+  const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false)
+  const [confirmDeleteText, setConfirmDeleteText] = useState('')
+
+  const resetDataMutation = useMutation({
+    mutationFn: () => api.post('/settings/reset-all-data'),
+    onSuccess: (res: any) => {
+      queryClient.invalidateQueries()
+      refetchSettings()
+      setIsResetConfirmOpen(false)
+      setConfirmDeleteText('')
+      showToast(res.message || 'All data has been deleted. System is now fresh and production-ready!')
+    },
+    onError: (err: any) => {
+      setErrorMsg(err.message || 'Failed to delete all data')
     },
   })
 
@@ -367,6 +395,101 @@ export const SettingsPage: React.FC = () => {
           </form>
         </CardContent>
       </Card>
+
+      {/* Section 3: Danger Zone - Factory Data Reset */}
+      <Card className="border border-rose-500/40 bg-rose-50/20 dark:bg-rose-950/10 shadow-sm">
+        <CardHeader className="py-4 border-b border-rose-200/60 dark:border-rose-900/40 bg-rose-50/50 dark:bg-rose-950/20">
+          <CardTitle className="text-base font-bold text-rose-700 dark:text-rose-400 flex items-center gap-2">
+            <Trash2 className="w-4 h-4 text-rose-600" />
+            Danger Zone: Delete All Data (Factory Clean)
+          </CardTitle>
+          <CardDescription className="text-xs text-rose-900/80 dark:text-rose-300/80">
+            Permanently clear all student admissions, fee receipts, installment schedules, and operational expenses to prepare for clean production launch.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pt-5 space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            <div className="p-3 rounded-lg border border-emerald-200 bg-emerald-50/50 dark:bg-emerald-950/20 space-y-1">
+              <span className="font-bold text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                Preserved As Is:
+              </span>
+              <p className="text-[11px] text-emerald-700 dark:text-emerald-400">
+                All User Accounts &amp; Login Credentials (Class Owner &amp; Developer), Institute Logo, Branches, Sessions, Courses, and System Configuration.
+              </p>
+            </div>
+            <div className="p-3 rounded-lg border border-rose-200 bg-rose-50/50 dark:bg-rose-950/20 space-y-1">
+              <span className="font-bold text-rose-800 dark:text-rose-300 flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
+                Permanently Cleared:
+              </span>
+              <p className="text-[11px] text-rose-700 dark:text-rose-400">
+                All Student Records, Roll Numbers, Admission History, Fee Collections, Receipts, Outstanding Dues, and Expense Vouchers.
+              </p>
+            </div>
+          </div>
+
+          <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-t">
+            <p className="text-xs text-muted-foreground">
+              Once deleted, transactional records cannot be recovered unless restored from an external database backup.
+            </p>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => {
+                setConfirmDeleteText('')
+                setIsResetConfirmOpen(true)
+              }}
+              className="gap-1.5 text-xs font-bold shrink-0 bg-rose-600 hover:bg-rose-700 text-white"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Delete All Data
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Confirmation Modal for Resetting All Data */}
+      <AlertDialog open={isResetConfirmOpen} onOpenChange={setIsResetConfirmOpen}>
+        <AlertDialogContent className="max-w-md border-rose-500/40">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-base font-bold text-rose-600 flex items-center gap-2">
+              <AlertCircle className="w-5 h-5 text-rose-600" />
+              Confirm Factory Data Wipe
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-xs space-y-2.5 pt-2">
+              <p>
+                Are you sure you want to permanently delete all student admissions, fee payments, and operational expenses from the software?
+              </p>
+              <div className="p-2.5 rounded bg-muted/60 border text-[11px] space-y-1 text-foreground">
+                <p><strong>Login credentials will NOT be changed.</strong> You can log in using your existing username and password.</p>
+                <p>Receipt counters will be reset to 0 so fresh production receipts start cleanly.</p>
+              </div>
+              <p className="font-medium text-rose-600 pt-1">
+                Type <strong>DELETE</strong> below to confirm:
+              </p>
+              <Input
+                value={confirmDeleteText}
+                onChange={(e) => setConfirmDeleteText(e.target.value)}
+                placeholder="Type DELETE"
+                className="text-xs font-mono"
+              />
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2 sm:gap-0 pt-2">
+            <AlertDialogCancel disabled={resetDataMutation.isPending} onClick={() => setIsResetConfirmOpen(false)}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={confirmDeleteText.trim().toUpperCase() !== 'DELETE' || resetDataMutation.isPending}
+              onClick={() => resetDataMutation.mutate()}
+              className="bg-rose-600 hover:bg-rose-700 text-white font-bold"
+            >
+              {resetDataMutation.isPending ? 'Deleting All Data...' : 'Confirm & Wipe All Data'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

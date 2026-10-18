@@ -44,7 +44,9 @@ import {
 } from 'lucide-react'
 import { cn, formatCurrency, formatDate, formatDateLong, getTodayDateString, toInputDateString } from '@/lib/utils'
 import { FeeReceiptModal, type ReceiptData } from '@/components/FeeReceiptModal'
+import { OfficialFinancialReportModal } from '@/components/OfficialFinancialReportModal'
 import { WhatsAppIcon, openWhatsApp, buildReceiptWhatsAppMessage } from '@/lib/whatsapp'
+import * as XLSX from 'xlsx'
 import {
   exportPaymentsToExcel,
   exportPaymentsToPDF,
@@ -179,6 +181,7 @@ export const DailyReportsPage: React.FC = () => {
   const [collectionPageSize, setCollectionPageSize] = useState(25)
 
   // --- Expenses Table UI States ---
+  const [isOfficialPrintModalOpen, setIsOfficialPrintModalOpen] = useState(false)
   const [isExpColModalOpen, setIsExpColModalOpen] = useState(false)
   const [visibleExpCols, setVisibleExpCols] = useState<Record<string, boolean>>(() => {
     const saved = localStorage.getItem('sutawane_daily_expenses_cols_v1')
@@ -206,6 +209,18 @@ export const DailyReportsPage: React.FC = () => {
     nextParams.set('mode', mode)
     setSearchParams(nextParams)
   }
+
+  // Intercept Ctrl+P / Cmd+P to open the Official A4 Printable Report Modal
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+        e.preventDefault()
+        setIsOfficialPrintModalOpen(true)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
 
   // Compute startDate & endDate based on mode
   const { computedStartDate, computedEndDate, periodLabel } = useMemo(() => {
@@ -652,12 +667,12 @@ export const DailyReportsPage: React.FC = () => {
   const instituteName = (settings?.institute_name || currentBranch?.name || 'SUTAWANE CLASSES').toUpperCase()
   const tagline = settings?.tagline || 'Excellence in Coaching & Board Exam Preparations'
   const address = currentBranch?.address || settings?.address || 'Main Campus, Maharashtra'
-  const phone = currentBranch?.phone || settings?.phone || '+91 98765 43210'
+  const phone = currentBranch?.phone || settings?.phone || '7776824564'
   const email = settings?.email || 'contact@sutawaneclasses.com'
   const logoUrl = activeLogoUrl || settings?.logo_url || null
 
   const handlePrint = () => {
-    window.print()
+    setIsOfficialPrintModalOpen(true)
   }
 
   // Quick preset handlers
@@ -668,42 +683,250 @@ export const DailyReportsPage: React.FC = () => {
     setDailyDate(getTodayDateString(y))
   }
 
-  // Export CSV
-  const handleExportCSV = () => {
-    const rows: string[] = []
-    rows.push(`"FINANCIAL AUDIT STATEMENT - ${instituteName}"`)
-    rows.push(`"Period:","${periodLabel}"`)
-    rows.push(`"Branch Scope:","${currentBranch ? currentBranch.name : 'All Branches Consolidated'}"`)
-    rows.push(`"Academic Session:","${currentSession ? currentSession.name : 'All Sessions'}"`)
-    rows.push('')
-    rows.push('"--- EXECUTIVE SUMMARY ---"')
-    rows.push(`"Total Collections (Inflow)","${summary.totalCollections}","${summary.collectionsCount} Receipts"`)
-    rows.push(`"Total Expenses (Outflow)","${summary.totalExpenses}","${summary.expensesCount} Vouchers"`)
-    rows.push(
-      `"Net Financial Movement","${summary.netMovement}","${summary.netMovement >= 0 ? 'NET PROFIT' : 'NET LOSS'}"`
-    )
-    rows.push('')
-    rows.push('"--- COLLECTIONS & RECEIPTS ---"')
-    rows.push('"Receipt No","Date","Student Name","Roll No","Class/Course","Mode","Txn Ref","Amount (INR)"')
-    collections.forEach((c) => {
-      rows.push(
-        `"${c.receiptNumber}","${formatDate(c.paymentDate)}","${c.studentName}","${c.rollNumber}","${c.standard}","${c.paymentMode}","${c.referenceNumber || ''}","${c.totalAmount}"`
-      )
-    })
-    rows.push('')
-    rows.push('"--- EXPENSES & DISBURSEMENTS ---"')
-    rows.push('"Voucher Ref","Date","Description","Category","Paid To/Vendor","Mode","Amount (INR)"')
-    expenses.forEach((e) => {
-      rows.push(
-        `"${e.referenceNumber || ''}","${formatDate(e.expenseDate)}","${e.description}","${e.categoryName}","${e.vendor || e.paidTo || ''}","${e.paymentMode}","${e.amount}"`
-      )
-    })
+  // Export Multi-Sheet Excel Statement (.xlsx)
+  const handleExportExcelStatement = () => {
+    const wb = XLSX.utils.book_new()
+    const branchLabel = currentBranch ? currentBranch.name : 'All Branches Consolidated'
+    const sessionLabel = currentSession ? currentSession.name : 'All Academic Sessions'
 
-    const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8;' })
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(blob)
-    link.download = `financial_statement_${activeMode.toLowerCase()}_${computedStartDate}_to_${computedEndDate}.csv`
-    link.click()
+    // ==========================================
+    // SHEET 1: Executive Audit Summary
+    // ==========================================
+    const summaryRows: any[][] = [
+      [`FINANCIAL AUDIT STATEMENT - ${instituteName}`],
+      [`Period:`, periodLabel],
+      [`Branch Scope:`, branchLabel],
+      [`Academic Session:`, sessionLabel],
+      [`Audit Ref:`, `AUD-${computedStartDate.replace(/-/g, '')}-${computedEndDate.replace(/-/g, '')}`],
+      [`Generated On:`, new Date().toLocaleString('en-IN')],
+      [],
+      ['--- EXECUTIVE FINANCIAL PERFORMANCE SUMMARY ---'],
+      ['Accounting Stream / Metric', 'Transaction Volume', 'Total Amount (₹)', 'Performance Analysis'],
+      [
+        'Total Collections (Revenue Inflow)',
+        `${summary.collectionsCount} Receipts`,
+        summary.totalCollections,
+        'Confirmed student tuition & academic fee receipts',
+      ],
+      [
+        'Total Operating Expenses (Outflow)',
+        `${summary.expensesCount} Vouchers`,
+        summary.totalExpenses,
+        'Rent, staff salaries, utilities, and center operations',
+      ],
+      [
+        'Net Financial Movement (Cash Flow)',
+        `${summary.collectionsCount + summary.expensesCount} Transactions`,
+        summary.netMovement,
+        summary.netMovement >= 0 ? 'NET PROFIT / OPERATIONAL SURPLUS' : 'NET DEFICIT / OPERATIONAL LOSS',
+      ],
+      [
+        'Operating Expense Ratio (%)',
+        '—',
+        summary.totalCollections > 0 ? Number(((summary.totalExpenses / summary.totalCollections) * 100).toFixed(1)) : 0,
+        '% of gross collection consumed by operations',
+      ],
+      [],
+      ['--- FINANCIAL MOVEMENT AUDIT BREAKDOWN ---'],
+      ['Category / Stream', 'Branch Scope', 'Movement Type', 'Transaction Count', 'Total Amount (₹)'],
+      [
+        'Student Tuition & Fee Collections',
+        branchLabel,
+        'INFLOW (+)',
+        `${summary.collectionsCount} receipts`,
+        summary.totalCollections,
+      ],
+      [
+        'Operating Center Expenditures',
+        branchLabel,
+        'OUTFLOW (-)',
+        `${summary.expensesCount} vouchers`,
+        summary.totalExpenses,
+      ],
+      [
+        'NET CASH & FINANCIAL BALANCE',
+        branchLabel,
+        summary.netMovement >= 0 ? 'SURPLUS (+)' : 'DEFICIT (-)',
+        `${summary.collectionsCount + summary.expensesCount} records`,
+        summary.netMovement,
+      ],
+    ]
+
+    const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows)
+    wsSummary['!cols'] = [{ wch: 38 }, { wch: 26 }, { wch: 22 }, { wch: 50 }]
+    wsSummary['!rows'] = [
+      { hpt: 26 },
+      { hpt: 18 },
+      { hpt: 18 },
+      { hpt: 18 },
+      { hpt: 18 },
+      { hpt: 18 },
+      { hpt: 14 },
+      { hpt: 22 },
+      { hpt: 20 },
+      { hpt: 19 },
+      { hpt: 19 },
+      { hpt: 20 },
+      { hpt: 19 },
+      { hpt: 14 },
+      { hpt: 22 },
+      { hpt: 20 },
+      { hpt: 19 },
+      { hpt: 19 },
+      { hpt: 22 },
+    ]
+    XLSX.utils.book_append_sheet(wb, wsSummary, 'Executive Audit Summary')
+
+    // ==========================================
+    // SHEET 2: Fee Collections Register
+    // ==========================================
+    const colHeader = [
+      '#',
+      'Receipt No',
+      'Payment Date',
+      'Student Name',
+      'Roll Number',
+      'Class / Course',
+      'Branch',
+      'Payment Mode',
+      'Txn / Ref No',
+      'Amount (₹)',
+    ]
+    const colDataRows = collections.map((c, idx) => [
+      idx + 1,
+      c.receiptNumber || '—',
+      formatDate(c.paymentDate),
+      c.studentName || '—',
+      c.rollNumber || '—',
+      c.standard || '—',
+      c.branchName || branchLabel,
+      c.paymentMode || 'CASH',
+      c.referenceNumber || '—',
+      c.totalAmount || 0,
+    ])
+    const totalCollectionsSum = collections.reduce((sum, c) => sum + (c.totalAmount || 0), 0)
+    const colSummaryRow = [
+      '',
+      `TOTAL COLLECTIONS (${collections.length})`,
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
+      'Total (₹):',
+      totalCollectionsSum,
+    ]
+
+    const wsCollections = XLSX.utils.aoa_to_sheet([colHeader, ...colDataRows, colSummaryRow])
+    wsCollections['!cols'] = [
+      { wch: 6 },
+      { wch: 20 },
+      { wch: 14 },
+      { wch: 28 },
+      { wch: 14 },
+      { wch: 16 },
+      { wch: 22 },
+      { wch: 14 },
+      { wch: 18 },
+      { wch: 16 },
+    ]
+    wsCollections['!rows'] = [{ hpt: 22 }]
+    XLSX.utils.book_append_sheet(wb, wsCollections, 'Fee Collections Register')
+
+    // ==========================================
+    // SHEET 3: Operating Expenses Register
+    // ==========================================
+    const expHeader = [
+      '#',
+      'Voucher Ref',
+      'Disbursement Date',
+      'Expense Category',
+      'Description / Purpose',
+      'Paid To / Vendor',
+      'Branch',
+      'Payment Mode',
+      'Amount (₹)',
+    ]
+    const expDataRows = expenses.map((e, idx) => [
+      idx + 1,
+      e.referenceNumber || `VCH-${String(idx + 1).padStart(4, '0')}`,
+      formatDate(e.expenseDate),
+      e.categoryName || 'General',
+      e.description || '—',
+      e.vendor || e.paidTo || '—',
+      e.branchName || branchLabel,
+      e.paymentMode || 'CASH',
+      e.amount || 0,
+    ])
+    const totalExpensesSum = expenses.reduce((sum, e) => sum + (e.amount || 0), 0)
+    const expSummaryRow = [
+      '',
+      `TOTAL EXPENSES (${expenses.length})`,
+      '',
+      '',
+      '',
+      '',
+      '',
+      'Total (₹):',
+      totalExpensesSum,
+    ]
+
+    const wsExpenses = XLSX.utils.aoa_to_sheet([expHeader, ...expDataRows, expSummaryRow])
+    wsExpenses['!cols'] = [
+      { wch: 6 },
+      { wch: 18 },
+      { wch: 16 },
+      { wch: 20 },
+      { wch: 32 },
+      { wch: 22 },
+      { wch: 22 },
+      { wch: 14 },
+      { wch: 16 },
+    ]
+    wsExpenses['!rows'] = [{ hpt: 22 }]
+    XLSX.utils.book_append_sheet(wb, wsExpenses, 'Operating Expenses Register')
+
+    // ==========================================
+    // SHEET 4: Payment Channels Breakdown
+    // ==========================================
+    const channelsHeader = [
+      'Payment Channel / Mode',
+      'Transaction Volume',
+      'Total Amount Realized (₹)',
+      'Share of Collections (%)',
+    ]
+    const channelsRows = Object.entries(summary.collectionsByMode || {}).map(([mode, data]: [string, any]) => {
+      const share = totalCollectionsSum > 0 ? Number(((data.amount / totalCollectionsSum) * 100).toFixed(1)) : 0
+      return [mode, `${data.count} receipts`, data.amount, `${share}%`]
+    })
+    const wsChannels = XLSX.utils.aoa_to_sheet([channelsHeader, ...channelsRows])
+    wsChannels['!cols'] = [{ wch: 26 }, { wch: 22 }, { wch: 26 }, { wch: 24 }]
+    wsChannels['!rows'] = [{ hpt: 22 }]
+    XLSX.utils.book_append_sheet(wb, wsChannels, 'Payment Channels Breakdown')
+
+    // ==========================================
+    // SHEET 5: Expense Categories Breakdown
+    // ==========================================
+    const categoriesHeader = [
+      'Expense Category',
+      'Voucher Volume',
+      'Total Amount Disbursed (₹)',
+      'Share of Expenditures (%)',
+    ]
+    const categoriesRows = Object.entries(summary.expensesByCategory || {}).map(([cat, data]: [string, any]) => {
+      const share = totalExpensesSum > 0 ? Number(((data.amount / totalExpensesSum) * 100).toFixed(1)) : 0
+      return [cat, `${data.count} vouchers`, data.amount, `${share}%`]
+    })
+    const wsCategories = XLSX.utils.aoa_to_sheet([categoriesHeader, ...categoriesRows])
+    wsCategories['!cols'] = [{ wch: 26 }, { wch: 20 }, { wch: 28 }, { wch: 26 }]
+    wsCategories['!rows'] = [{ hpt: 22 }]
+    XLSX.utils.book_append_sheet(wb, wsCategories, 'Expense Categories Breakdown')
+
+    // Write multi-sheet file
+    const fileName = `Financial_Statement_${activeMode.toLowerCase()}_${computedStartDate}_to_${computedEndDate}.xlsx`
+    XLSX.writeFile(wb, fileName)
+    showToast(`Exported multi-sheet financial statement to Excel (.xlsx)`)
   }
 
   return (
@@ -716,43 +939,6 @@ export const DailyReportsPage: React.FC = () => {
         </div>
       )}
 
-      {/* Official Printable Institute Letterhead (visible during A4 print) */}
-      <div className="border-b-2 border-neutral-900 pb-3 mb-4 hidden print:block">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            {logoUrl ? (
-              <img src={logoUrl} alt="Logo" className="w-14 h-14 object-contain rounded" />
-            ) : (
-              <div className="w-12 h-12 rounded bg-neutral-900 text-white flex items-center justify-center font-bold">
-                <GraduationCap className="w-7 h-7" />
-              </div>
-            )}
-            <div>
-              <h1 className="text-xl font-black tracking-tight uppercase text-neutral-950">
-                {instituteName}
-              </h1>
-              <p className="text-xs font-semibold text-neutral-700">{tagline}</p>
-              <p className="text-[10px] text-neutral-600">
-                {address} {phone ? `• Tel: ${phone}` : ''} {email ? `• ${email}` : ''}
-              </p>
-            </div>
-          </div>
-          <div className="text-right text-xs">
-            <span className="inline-block px-2.5 py-1 bg-neutral-900 text-white font-bold uppercase rounded text-[10px] tracking-wider">
-              {activeMode === 'DAILY'
-                ? 'DAILY FINANCIAL STATEMENT'
-                : activeMode === 'MONTHLY'
-                ? 'MONTHLY FINANCIAL STATEMENT'
-                : 'CUSTOM FINANCIAL AUDIT'}
-            </span>
-            <p className="mt-1 font-bold text-neutral-900">{periodLabel}</p>
-            <p className="text-[10px] text-neutral-600">
-              Scope: {currentBranch ? currentBranch.name : 'All Branches'}
-              {currentSession && ` • Session: ${currentSession.name}`}
-            </p>
-          </div>
-        </div>
-      </div>
 
       {/* Screen Controls Header (hidden in print) */}
       <div className="flex flex-col gap-3 no-print border-b pb-4">
@@ -783,12 +969,12 @@ export const DailyReportsPage: React.FC = () => {
             <Button
               variant="outline"
               size="sm"
-              onClick={handleExportCSV}
-              className="gap-1.5 text-xs h-9"
-              title="Export complete statement with collections and expenses to CSV"
+              onClick={handleExportExcelStatement}
+              className="gap-1.5 text-xs h-9 border-emerald-500/40 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+              title="Export complete financial statement with all accounting streams to Multi-Sheet Excel (.xlsx)"
             >
-              <Download className="w-3.5 h-3.5 text-primary" />
-              Export CSV
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+              Export Excel (.xlsx)
             </Button>
             <Button
               onClick={handlePrint}
@@ -1963,21 +2149,6 @@ export const DailyReportsPage: React.FC = () => {
         </Card>
       )}
 
-      {/* Printable Signatory Footer */}
-      <div className="pt-8 hidden print:flex justify-between items-end text-xs text-neutral-600 border-t border-neutral-300">
-        <div>
-          <p className="font-semibold text-neutral-800">{instituteName}</p>
-          <p className="text-[10px] text-neutral-500">
-            System generated comprehensive financial audit statement • {periodLabel}
-          </p>
-        </div>
-        <div className="text-center">
-          <div className="w-40 border-b border-neutral-500 mb-1"></div>
-          <p className="font-bold text-neutral-800 uppercase tracking-wider text-[10px]">
-            Accountant / Director Signature
-          </p>
-        </div>
-      </div>
 
       {/* Collections Column Customization Modal */}
       <Dialog open={isColModalOpen} onOpenChange={setIsColModalOpen}>
@@ -2091,6 +2262,23 @@ export const DailyReportsPage: React.FC = () => {
       {selectedReceipt && (
         <FeeReceiptModal receipt={selectedReceipt} onClose={() => setSelectedReceipt(null)} />
       )}
+
+      {/* Official A4 Financial Statement & Audit Report Modal */}
+      <OfficialFinancialReportModal
+        isOpen={isOfficialPrintModalOpen}
+        onClose={() => setIsOfficialPrintModalOpen(false)}
+        summary={summary}
+        collections={collections}
+        expenses={expenses}
+        periodLabel={periodLabel}
+        activeMode={activeMode}
+        startDate={computedStartDate}
+        endDate={computedEndDate}
+        currentBranch={currentBranch}
+        currentSession={currentSession}
+        settings={settings}
+        activeLogoUrl={activeLogoUrl}
+      />
     </div>
   )
 }

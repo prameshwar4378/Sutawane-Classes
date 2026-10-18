@@ -1,5 +1,5 @@
 import React from 'react'
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { AppLayout } from '@/components/layout/AppLayout'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { StudentsPage } from '@/pages/StudentsPage'
@@ -64,7 +64,7 @@ const LoginRoute: React.FC = () => {
 
 export const App: React.FC = () => {
   return (
-    <BrowserRouter>
+    <HashRouter>
       <Routes>
         {/* Public Login Route */}
         <Route path="/login" element={<LoginRoute />} />
@@ -105,7 +105,7 @@ export const App: React.FC = () => {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
-    </BrowserRouter>
+    </HashRouter>
   )
 }
 

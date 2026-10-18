@@ -40,6 +40,49 @@ export function resolveDataDirectory(): StoragePaths {
     }
   });
 
+  // If database does not exist, initialize from bundled template.db
+  const resourcesPath = (process as any).resourcesPath || '';
+  if (!fs.existsSync(databasePath)) {
+    const candidateTemplatePaths = [
+      path.resolve(__dirname, '../../prisma/template.db'),
+      path.resolve(__dirname, '../../../backend/prisma/template.db'),
+      path.resolve(resourcesPath, 'backend/prisma/template.db'),
+      path.resolve(resourcesPath, 'template.db'),
+      path.resolve(__dirname, 'template.db'),
+    ];
+    for (const tPath of candidateTemplatePaths) {
+      if (tPath && fs.existsSync(tPath)) {
+        try {
+          fs.copyFileSync(tPath, databasePath);
+          console.log(`[Database] Initialized new persistent database from template: ${tPath}`);
+          break;
+        } catch (e) {
+          console.error(`[Database] Failed to copy template from ${tPath}:`, e);
+        }
+      }
+    }
+  }
+
+  // Ensure master logo is populated in photosDir if not present
+  const defaultLogoTarget = path.join(photosDir, 'logo-master-1792115174632.png');
+  if (!fs.existsSync(defaultLogoTarget)) {
+    const candidateLogoPaths = [
+      path.resolve(__dirname, '../../prisma/logo-master.png'),
+      path.resolve(__dirname, '../../../backend/prisma/logo-master.png'),
+      path.resolve(__dirname, '../../../data/dev/photos/logo-master-1792115174632.png'),
+      path.resolve(resourcesPath, 'backend/prisma/logo-master.png'),
+    ];
+    for (const lPath of candidateLogoPaths) {
+      if (lPath && fs.existsSync(lPath)) {
+        try {
+          fs.copyFileSync(lPath, defaultLogoTarget);
+          console.log(`[Branding] Master logo seeded from: ${lPath}`);
+          break;
+        } catch {}
+      }
+    }
+  }
+
   return {
     baseDir,
     databaseDir,
