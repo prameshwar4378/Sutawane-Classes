@@ -295,7 +295,7 @@ export const CollectFeeModal: React.FC<CollectFeeModalProps> = ({
   return (
     <>
       <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-        <DialogContent className="w-[95vw] sm:max-w-3xl max-h-[92vh] overflow-y-auto p-5 sm:p-7 rounded-2xl border-emerald-500/30 shadow-2xl">
+        <DialogContent className="w-[95vw] sm:max-w-3xl max-h-[92vh] overflow-y-auto overflow-x-hidden p-5 sm:p-7 rounded-2xl border-emerald-500/30 shadow-2xl">
           <DialogHeader className="space-y-2 pb-3 border-b text-left">
             <div className="flex items-center gap-3">
               <div className="w-11 h-11 rounded-xl bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center flex-shrink-0 border border-emerald-300 dark:border-emerald-800 shadow-xs">
