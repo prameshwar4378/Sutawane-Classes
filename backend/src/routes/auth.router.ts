@@ -170,7 +170,7 @@ authRouter.post('/developer/send-otp', async (req: Request, res: Response) => {
     const cleanEmail = String(email).trim().toLowerCase()
     if (cleanEmail !== AUTHORIZED_DEVELOPER_EMAIL) {
       return res.status(403).json({
-        error: `Unauthorized email address. Developer access is strictly restricted to ${AUTHORIZED_DEVELOPER_EMAIL} only.`,
+        error: 'Unauthorized email address. Developer access is restricted to the authorized developer account only.',
       })
     }
 
@@ -190,7 +190,7 @@ authRouter.post('/developer/send-otp', async (req: Request, res: Response) => {
 
     res.json({
       success: true,
-      message: `A 6-digit One-Time Password (OTP) has been sent to ${cleanEmail}. Please check your inbox.`,
+      message: 'A 6-digit One-Time Password (OTP) has been sent to your registered developer email. Please check your inbox.',
       email: cleanEmail,
     })
   } catch (error: any) {
@@ -216,7 +216,7 @@ authRouter.post('/developer/verify-otp', async (req: Request, res: Response) => 
     const cleanEmail = String(email).trim().toLowerCase()
     if (cleanEmail !== AUTHORIZED_DEVELOPER_EMAIL) {
       return res.status(403).json({
-        error: `Unauthorized email address. Developer access is strictly restricted to ${AUTHORIZED_DEVELOPER_EMAIL} only.`,
+        error: 'Unauthorized email address. Developer access is restricted to the authorized developer account only.',
       })
     }
 

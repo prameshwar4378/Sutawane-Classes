@@ -542,7 +542,7 @@ export const StudentDetailPage: React.FC = () => {
                 onClick={() => {
                   const currentPending = Number(admission?.pendingFees || 0)
                   const priorPending = (student.previousSessionDues || []).reduce(
-                    (sum: number, pd: any) => sum + (pd.isCleared ? 0 : Number(pd.balanceRemaining || 0)),
+                    (sum: number, pd: any) => sum + (pd.isCleared || Number(pd.balanceRemaining || 0) <= 0 ? 0 : Number(pd.balanceRemaining || 0)),
                     0
                   )
                   const overallPending =
@@ -700,7 +700,7 @@ export const StudentDetailPage: React.FC = () => {
                     onClick={() => {
                       const currentPending = Number(admission?.pendingFees || 0)
                       const priorPending = (student.previousSessionDues || []).reduce(
-                        (sum: number, pd: any) => sum + (pd.isCleared ? 0 : Number(pd.balanceRemaining || 0)),
+                        (sum: number, pd: any) => sum + (pd.isCleared || Number(pd.balanceRemaining || 0) <= 0 ? 0 : Number(pd.balanceRemaining || 0)),
                         0
                       )
                       const overallPending =

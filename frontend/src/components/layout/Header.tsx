@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Building2, Calendar, Activity, CheckCircle2, AlertTriangle, Search, User, X, PanelLeftClose, PanelLeftOpen, CreditCard, ShieldCheck, ShieldAlert, LogOut, Clock } from 'lucide-react'
+import { Building2, Calendar, Activity, CheckCircle2, AlertTriangle, Search, User, X, PanelLeftClose, PanelLeftOpen, CreditCard, ShieldCheck, ShieldAlert, LogOut, Clock, RotateCw } from 'lucide-react'
 import { useApp } from '@/context/AppContext'
 import { useAuth } from '@/context/AuthContext'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import type { HealthCheckResponse } from '@sutawane/shared'
 import { Badge } from '@/components/ui/badge'
@@ -30,6 +30,28 @@ export const Header: React.FC = () => {
     queryFn: () => api.get('/health'),
     refetchInterval: 30000,
   })
+
+  const queryClient = useQueryClient()
+  const [isRefreshing, setIsRefreshing] = useState(false)
+
+  const handleRefresh = async (e?: React.MouseEvent) => {
+    if (e?.shiftKey || e?.ctrlKey) {
+      window.location.reload()
+      return
+    }
+
+    setIsRefreshing(true)
+    try {
+      await Promise.all([
+        queryClient.invalidateQueries(),
+        queryClient.refetchQueries(),
+      ])
+    } catch {
+      window.location.reload()
+    } finally {
+      setTimeout(() => setIsRefreshing(false), 600)
+    }
+  }
 
   // Global Quick Student Search State
   const [searchQuery, setSearchQuery] = useState('')
@@ -261,6 +283,19 @@ export const Header: React.FC = () => {
               ))}
           </select>
         </div>
+
+        {/* Global Data Refresh Button */}
+        <button
+          type="button"
+          onClick={handleRefresh}
+          disabled={isRefreshing}
+          title="Refresh software data (Ctrl+Click to reload window)"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border bg-muted/60 hover:bg-muted text-xs font-semibold text-foreground transition-all cursor-pointer shadow-2xs hover:border-primary/50 focus:outline-none"
+          aria-label="Refresh application data"
+        >
+          <RotateCw className={`w-3.5 h-3.5 text-primary ${isRefreshing ? 'animate-spin' : ''}`} />
+          <span className="hidden sm:inline">Refresh</span>
+        </button>
 
         {/* Live Online Status: Green Blinking & Pulse Animation Beacon */}
         <div className="flex items-center pl-1" title="System Online (Local Persistent SQLite Active)">

@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron';
 import path from 'path';
 import fs from 'fs';
+import http from 'http';
 import { exec } from 'child_process';
 
 // Ensure Windows 11 uses the robust standard Print Dialog without the broken preview banner
@@ -33,11 +34,62 @@ const persistentDataDir = path.join(userDataPath, 'data');
   }
 });
 
+// Production runtime diagnostic logger
+function logRuntime(...args: any[]): void {
+  try {
+    const logFile = path.join(persistentDataDir, 'electron-runtime.log');
+    const timestamp = new Date().toISOString();
+    const formatted = args
+      .map((arg) => {
+        if (arg instanceof Error) return `${arg.name}: ${arg.message}\n${arg.stack}`;
+        if (typeof arg === 'object') return JSON.stringify(arg, null, 2);
+        return String(arg);
+      })
+      .join(' ');
+    fs.appendFileSync(logFile, `[${timestamp}] ${formatted}\n`, 'utf-8');
+  } catch {}
+  console.log(...args);
+}
+
+process.on('uncaughtException', (err) => {
+  logRuntime('[Electron] UNCAUGHT EXCEPTION:', err);
+});
+
+process.on('unhandledRejection', (reason) => {
+  logRuntime('[Electron] UNHANDLED REJECTION:', reason);
+});
+
+// Ensure Node resolves native/unpacked modules placed in resources/node_modules
+const resourcesPath = (process as any).resourcesPath || '';
+const resourcesNodeModules = path.join(resourcesPath, 'node_modules');
+if (fs.existsSync(resourcesNodeModules)) {
+  const current = process.env.NODE_PATH || '';
+  process.env.NODE_PATH = current ? `${resourcesNodeModules}${path.delimiter}${current}` : resourcesNodeModules;
+  try {
+    require('module').Module._initPaths();
+  } catch {}
+}
+
 // Configure backend environment
 process.env.SUTAWANE_DATA_DIR = persistentDataDir;
 process.env.IS_ELECTRON_MAIN = 'true';
 process.env.PORT = process.env.PORT || '5000';
 process.env.NODE_ENV = isDev ? 'development' : 'production';
+
+// Ensure Prisma finds query engine in unpacked asar or root node_modules
+const candidateEnginePaths = [
+  path.join(resourcesPath, 'node_modules/.prisma/client/query_engine-windows.dll.node'),
+  path.join(resourcesPath, 'app.asar.unpacked/node_modules/.prisma/client/query_engine-windows.dll.node'),
+  path.join(__dirname, '../../node_modules/.prisma/client/query_engine-windows.dll.node'),
+  path.join(__dirname, '../../../node_modules/.prisma/client/query_engine-windows.dll.node')
+];
+for (const p of candidateEnginePaths) {
+  if (p && fs.existsSync(p)) {
+    process.env.PRISMA_QUERY_ENGINE_LIBRARY = p;
+    logRuntime(`[Electron] Configured PRISMA_QUERY_ENGINE_LIBRARY: ${p}`);
+    break;
+  }
+}
 
 // Resolve application icon across dev and packaged distributions
 function getAppIcon(): string | undefined {
@@ -53,6 +105,7 @@ function getAppIcon(): string | undefined {
 
 // Start backend Express server inside Electron in packaged production
 async function startBackendServer(): Promise<void> {
+  logRuntime('[Electron] Starting in-process backend Express server...');
   const candidateBackendPaths = [
     path.join(__dirname, '../../backend/dist/index.js'),
     path.join(__dirname, '../../../backend/dist/index.js'),
@@ -62,19 +115,69 @@ async function startBackendServer(): Promise<void> {
 
   const backendPath = candidateBackendPaths.find((p) => fs.existsSync(p));
   if (!backendPath) {
-    console.warn('[Electron] Could not locate compiled backend at candidate paths:', candidateBackendPaths);
+    logRuntime('[Electron] ERROR: Could not locate compiled backend at candidate paths:', candidateBackendPaths);
     return;
   }
 
   try {
+    logRuntime(`[Electron] Loading backend module from: ${backendPath}`);
     const backendModule = require(backendPath);
     if (typeof backendModule.startServer === 'function') {
       serverInstance = await backendModule.startServer(5000);
-      console.log(`[Electron] In-process backend server started successfully from: ${backendPath}`);
+      logRuntime(`[Electron] In-process backend server startServer() resolved successfully`);
+    } else {
+      logRuntime('[Electron] ERROR: startServer export not found in backend module');
     }
-  } catch (err) {
-    console.error('[Electron] Error starting backend server:', err);
+  } catch (err: any) {
+    logRuntime('[Electron] ERROR starting backend server:', err?.stack || err);
   }
+}
+
+// Wait for backend HTTP port to accept requests before renderer navigation
+function waitForBackendReady(port: number = 5000, maxWaitMs: number = 20000): Promise<boolean> {
+  return new Promise((resolve) => {
+    let finished = false;
+    const startTime = Date.now();
+
+    const done = (result: boolean) => {
+      if (finished) return;
+      finished = true;
+      resolve(result);
+    };
+
+    const check = () => {
+      if (finished) return;
+      const req = http.get(`http://127.0.0.1:${port}/api/health`, (res) => {
+        if (finished) return;
+        if (res.statusCode === 200) {
+          logRuntime(`[Electron] Backend health check PASSED on port ${port} in ${Date.now() - startTime}ms`);
+          done(true);
+        } else {
+          retry();
+        }
+      });
+
+      req.on('error', () => {
+        if (!finished) retry();
+      });
+
+      req.setTimeout(1000, () => {
+        req.destroy();
+      });
+    };
+
+    const retry = () => {
+      if (finished) return;
+      if (Date.now() - startTime > maxWaitMs) {
+        logRuntime(`[Electron] Backend health check TIMED OUT after ${maxWaitMs}ms`);
+        done(false);
+      } else {
+        setTimeout(check, 300);
+      }
+    };
+
+    check();
+  });
 }
 
 function createWindow(): void {
@@ -123,8 +226,47 @@ function createWindow(): void {
     const devServerUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
     mainWindow.loadURL(devServerUrl);
   } else {
-    // In production, load via local HTTP to ensure 100% full compatibility with BrowserRouter and /api
-    mainWindow.loadURL('http://localhost:5000');
+    const appUrl = 'http://127.0.0.1:5000';
+    let retryCount = 0;
+    const maxRetries = 15;
+
+    // Retry gracefully if initial connection was temporarily refused during startup
+    mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+      logRuntime(`[Electron] WebContents did-fail-load: ${validatedURL} (${errorCode}: ${errorDescription})`);
+      if (retryCount < maxRetries) {
+        retryCount++;
+        logRuntime(`[Electron] Retrying loadURL (${retryCount}/${maxRetries}) in 1000ms...`);
+        setTimeout(() => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.loadURL(appUrl);
+          }
+        }, 1000);
+      } else {
+        logRuntime('[Electron] Max load retries reached. Showing troubleshooting fallback screen.');
+        const troubleshootingHtml = `
+          <html>
+            <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: #0f172a; color: #f8fafc; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; text-align: center;">
+              <h2 style="color: #ef4444; margin-bottom: 8px;">Software Initializing Error</h2>
+              <p style="color: #94a3b8; max-width: 500px; margin-bottom: 24px; font-size: 14px;">The background service could not be contacted at ${appUrl}. Check logs at: <br/><code style="color: #38bdf8; word-break: break-all;">${path.join(persistentDataDir, 'electron-runtime.log')}</code></p>
+              <button onclick="window.location.href='${appUrl}'" style="background: #3b82f6; color: white; border: none; padding: 10px 24px; border-radius: 6px; cursor: pointer; font-size: 15px; font-weight: 500;">Retry Now</button>
+            </body>
+          </html>
+        `;
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(troubleshootingHtml)}`);
+        }
+      }
+    });
+
+    // Wait for backend HTTP port to be live before loading URL
+    waitForBackendReady(5000, 15000).then((ready) => {
+      if (!ready) {
+        logRuntime('[Electron] Warning: Backend health check did not pass within 15s. Attempting to load URL anyway...');
+      }
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.loadURL(appUrl);
+      }
+    });
   }
 
   mainWindow.on('closed', () => {

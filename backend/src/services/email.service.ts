@@ -20,7 +20,7 @@ export async function sendDeveloperOtpEmail(targetEmail: string, otpCode: string
   const cleanEmail = String(targetEmail).trim().toLowerCase()
 
   if (cleanEmail !== AUTHORIZED_DEVELOPER_EMAIL) {
-    throw new Error('Unauthorized email address. Developer access is strictly restricted to prameshwar4378@gmail.com only.')
+    throw new Error('Unauthorized email address. Developer access is restricted to the authorized developer account only.')
   }
 
   const html = `

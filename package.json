@@ -11,6 +11,16 @@
     "backend",
     "frontend"
   ],
+  "dependencies": {
+    "@prisma/client": "^6.4.1",
+    "adm-zip": "^0.6.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "multer": "^2.4.0",
+    "nodemailer": "^10.1.2",
+    "zod": "^3.24.2"
+  },
   "scripts": {
     "dev": "concurrently -n \"BACKEND,FRONTEND\" -c \"blue,green\" \"npm run dev -w backend\" \"npm run dev -w frontend\"",
     "dev:electron": "concurrently -k -n \"BACKEND,FRONTEND,ELECTRON\" -c \"blue,green,magenta\" \"npm run dev -w backend\" \"npm run dev -w frontend\" \"wait-on tcp:5000 tcp:5173 && npm run electron:start\"",
@@ -46,10 +56,23 @@
       "frontend/dist/**/*",
       "shared/dist/**/*",
       "backend/prisma/**/*",
+      "node_modules/.prisma/**/*",
+      "!node_modules/.prisma/**/*.tmp*",
       "!**/node_modules/*/{CHANGELOG.md,README.md,README,test,tests,example,examples}",
       "!**/node_modules/*/__tests__/**"
     ],
     "extraResources": [
+      {
+        "from": "node_modules/.prisma",
+        "to": "node_modules/.prisma",
+        "filter": [
+          "!**/*.tmp*"
+        ]
+      },
+      {
+        "from": "node_modules/@prisma",
+        "to": "node_modules/@prisma"
+      },
       {
         "from": "backend/prisma/template.db",
         "to": "backend/prisma/template.db"

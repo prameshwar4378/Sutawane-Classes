@@ -156,10 +156,22 @@ studentRouter.get('/', async (req: Request, res: Response) => {
       const paidFees = (adm.payments || []).reduce((sum, p) => sum + p.totalAmount, 0)
       const pendingFees = Math.max(0, totalFees - paidFees)
 
-      // Sessions whose dues were carried forward to PreviousSessionDue
-      const carriedForwardSessionIds = new Set(
-        (student.previousSessionDues || []).map((pd) => pd.originalSessionId)
-      )
+      // Reconcile carried-forward previous session dues against original session payments
+      const previousDues = student.previousSessionDues || []
+      const carriedForwardSessionIds = new Set<string>()
+      let prevDuesPending = 0
+
+      for (const pd of previousDues) {
+        carriedForwardSessionIds.add(pd.originalSessionId)
+        const origAdm = student.admissions.find((a) => a.sessionId === pd.originalSessionId)
+        if (origAdm && origAdm.feePlan) {
+          const origTotal = origAdm.feePlan.netPayable ?? origAdm.feePlan.totalFees ?? pd.outstandingAmount
+          const origPaid = (origAdm.payments || []).reduce((sum, p) => sum + p.totalAmount, 0)
+          prevDuesPending += Math.max(0, origTotal - Math.max(origPaid, pd.collectedAmount || 0))
+        } else {
+          prevDuesPending += Math.max(0, pd.outstandingAmount - (pd.collectedAmount || 0))
+        }
+      }
 
       // Calculate overall pending amount across all admissions of this permanent student
       let allAdmissionsPending = 0
@@ -174,14 +186,6 @@ studentRouter.get('/', async (req: Request, res: Response) => {
         const aTotal = a.feePlan?.netPayable ?? a.feePlan?.totalFees ?? 0
         const aPaid = (a.payments || []).reduce((sum, p) => sum + p.totalAmount, 0)
         allAdmissionsPending += Math.max(0, aTotal - aPaid)
-      }
-
-      // Uncollected previous session dues
-      let prevDuesPending = 0
-      if (student.previousSessionDues) {
-        for (const pd of student.previousSessionDues) {
-          prevDuesPending += Math.max(0, pd.outstandingAmount - pd.collectedAmount)
-        }
       }
 
       const overallPendingAmount = allAdmissionsPending + prevDuesPending
@@ -384,15 +388,54 @@ studentRouter.get('/:id', async (req: Request, res: Response) => {
       }
     }) || []
 
-    // Uncollected previous session dues
-    const previousDuesPending = (student.previousSessionDues || []).reduce(
-      (sum, d) => sum + Math.max(0, d.outstandingAmount - d.collectedAmount),
-      0
-    )
+    // Reconcile previous session dues against original session payments
+    const previousDues = student.previousSessionDues || []
+    const carriedForwardSessionIds = new Set<string>()
 
-    // Sessions whose dues were carried forward to PreviousSessionDue
-    const carriedForwardSessionIds = new Set(
-      (student.previousSessionDues || []).map((pd) => pd.originalSessionId)
+    const reconciledPreviousDues = previousDues.map((d: any) => {
+      carriedForwardSessionIds.add(d.originalSessionId)
+      const origAdm = student.admissions.find((a: any) => a.sessionId === d.originalSessionId)
+      let balanceRemaining = Math.max(0, d.outstandingAmount - (d.collectedAmount || 0))
+      let collectedAmount = d.collectedAmount || 0
+
+      if (origAdm && origAdm.feePlan) {
+        const origTotal = origAdm.feePlan.netPayable ?? origAdm.feePlan.totalFees ?? d.outstandingAmount
+        const origPaid = (origAdm.payments || []).filter((p: any) => !p.isReversed).reduce((sum: number, p: any) => sum + p.totalAmount, 0)
+        const pdDirectPaid = (student.payments || []).filter((p: any) => p.previousDueId === d.id && !p.isReversed).reduce((sum: number, p: any) => sum + p.totalAmount, 0)
+        const totalPaidForOrig = Math.max(origPaid, pdDirectPaid, d.collectedAmount || 0)
+
+        balanceRemaining = Math.max(0, origTotal - totalPaidForOrig)
+        collectedAmount = Math.min(d.outstandingAmount, Math.max(0, d.outstandingAmount - balanceRemaining))
+      }
+
+      const isCleared = balanceRemaining <= 0
+
+      // Sync database record in background if divergent
+      if (d.collectedAmount !== collectedAmount) {
+        prisma.previousSessionDue.update({
+          where: { id: d.id },
+          data: { collectedAmount },
+        }).catch(() => {})
+      }
+
+      return {
+        id: d.id,
+        originalSessionId: d.originalSessionId,
+        currentSessionId: d.currentSessionId,
+        outstandingAmount: d.outstandingAmount,
+        collectedAmount,
+        balanceRemaining,
+        isCleared,
+        description: d.description,
+        originalSessionName: d.originalSession?.name,
+        currentSessionName: d.currentSession?.name,
+        createdAt: d.createdAt.toISOString(),
+      }
+    })
+
+    const previousDuesPending = reconciledPreviousDues.reduce(
+      (sum: number, d: any) => sum + (d.isCleared ? 0 : d.balanceRemaining),
+      0
     )
 
     // Overall pending across all admissions (strictly active admissions)
@@ -406,7 +449,7 @@ studentRouter.get('/:id', async (req: Request, res: Response) => {
         continue
       }
       const aNet = a.feePlan?.netPayable ?? a.feePlan?.totalFees ?? 0
-      const aPaid = (a.payments || []).reduce((sum, p) => sum + p.totalAmount, 0)
+      const aPaid = (a.payments || []).filter((p: any) => !p.isReversed).reduce((sum: number, p: any) => sum + p.totalAmount, 0)
       allAdmissionsPending += Math.max(0, aNet - aPaid)
     }
     const overallPendingAmount = allAdmissionsPending + previousDuesPending
@@ -510,16 +553,7 @@ studentRouter.get('/:id', async (req: Request, res: Response) => {
           pendingFees: Math.max(0, aNet - aPaid),
         }
       }),
-      previousSessionDues: student.previousSessionDues.map((d) => ({
-        id: d.id,
-        outstandingAmount: d.outstandingAmount,
-        collectedAmount: d.collectedAmount,
-        balanceRemaining: Math.max(0, d.outstandingAmount - d.collectedAmount),
-        description: d.description,
-        originalSessionName: d.originalSession?.name,
-        currentSessionName: d.currentSession?.name,
-        createdAt: d.createdAt.toISOString(),
-      })),
+      previousSessionDues: reconciledPreviousDues,
     })
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch student profile', details: String(error) })

@@ -52,6 +52,14 @@ feeRouter.get('/plans/:admissionId', async (req: Request, res: Response) => {
             student: {
               include: {
                 previousSessionDues: true,
+                admissions: {
+                  include: {
+                    feePlan: true,
+                    payments: {
+                      where: { isReversed: false },
+                    },
+                  },
+                },
               },
             },
             branch: true,
@@ -88,11 +96,18 @@ feeRouter.get('/plans/:admissionId', async (req: Request, res: Response) => {
     const totalPaid = sessionPayments.reduce((sum, p) => sum + p.totalAmount, 0)
     const totalPending = Math.max(0, netPayable - totalPaid)
 
-    // Uncollected previous session dues for this student
-    const previousDuesPending = (student.previousSessionDues || []).reduce(
-      (sum, d) => sum + Math.max(0, d.outstandingAmount - d.collectedAmount),
-      0
-    )
+    // Reconciled uncollected previous session dues for this student
+    let previousDuesPending = 0
+    for (const d of student.previousSessionDues || []) {
+      const origAdm = student.admissions?.find((a: any) => a.sessionId === d.originalSessionId)
+      if (origAdm && origAdm.feePlan) {
+        const origTotal = origAdm.feePlan.netPayable ?? origAdm.feePlan.totalFees ?? d.outstandingAmount
+        const origPaid = (origAdm.payments || []).reduce((sum: number, p: any) => sum + p.totalAmount, 0)
+        previousDuesPending += Math.max(0, origTotal - Math.max(origPaid, d.collectedAmount || 0))
+      } else {
+        previousDuesPending += Math.max(0, d.outstandingAmount - (d.collectedAmount || 0))
+      }
+    }
     const overallPendingAmount = totalPending + previousDuesPending
 
     const isFeesCleared = totalPending <= 0
@@ -542,6 +557,22 @@ feeRouter.post('/payments', async (req: Request, res: Response) => {
         },
       })
 
+      // If there is any PreviousSessionDue where originalSessionId === targetSessionId, synchronize collectedAmount
+      const relatedPreviousDue = await tx.previousSessionDue.findFirst({
+        where: {
+          studentId,
+          originalSessionId: targetSessionId,
+        },
+      })
+      if (relatedPreviousDue) {
+        await tx.previousSessionDue.update({
+          where: { id: relatedPreviousDue.id },
+          data: {
+            collectedAmount: { increment: numAmount },
+          },
+        })
+      }
+
       // Allocate to fee plan records
       if (feePlan) {
         if (!feePlan.installments || feePlan.installments.length === 0) {
@@ -694,6 +725,25 @@ feeRouter.post('/payments/:id/reverse', async (req: Request, res: Response) => {
         })
       }
 
+      // If this was an admission payment for an original session that has a PreviousSessionDue, decrement collectedAmount
+      if (existingPayment.sessionId) {
+        const relatedPreviousDue = await tx.previousSessionDue.findFirst({
+          where: {
+            studentId: existingPayment.studentId,
+            originalSessionId: existingPayment.sessionId,
+          },
+        })
+        if (relatedPreviousDue && relatedPreviousDue.collectedAmount > 0) {
+          const newCollected = Math.max(0, relatedPreviousDue.collectedAmount - existingPayment.totalAmount)
+          await tx.previousSessionDue.update({
+            where: { id: relatedPreviousDue.id },
+            data: {
+              collectedAmount: newCollected,
+            },
+          })
+        }
+      }
+
       return reversedPayment
     })
 
@@ -819,6 +869,14 @@ feeRouter.get('/dues', async (req: Request, res: Response) => {
                 student: {
                   include: {
                     previousSessionDues: true,
+                    admissions: {
+                      include: {
+                        feePlan: true,
+                        payments: {
+                          where: { isReversed: false },
+                        },
+                      },
+                    },
                   },
                 },
                 branch: true,
@@ -846,10 +904,17 @@ feeRouter.get('/dues', async (req: Request, res: Response) => {
         const isCleared = balance <= 0
         const computedStatus = isCleared ? 'PAID' : calculateInstallmentStatus(inst.amountDue, paid, inst.dueDate)
 
-        const previousDuesPending = ((student as any).previousSessionDues || []).reduce(
-          (sum: number, pd: any) => sum + (pd.isCleared ? 0 : (pd.balanceRemaining || 0)),
-          0
-        )
+        let previousDuesPending = 0
+        for (const pd of (student as any).previousSessionDues || []) {
+          const origAdm = (student as any).admissions?.find((a: any) => a.sessionId === pd.originalSessionId)
+          if (origAdm && origAdm.feePlan) {
+            const origTotal = origAdm.feePlan.netPayable ?? origAdm.feePlan.totalFees ?? pd.outstandingAmount
+            const origPaid = (origAdm.payments || []).reduce((sum: number, p: any) => sum + p.totalAmount, 0)
+            previousDuesPending += Math.max(0, origTotal - Math.max(origPaid, pd.collectedAmount || 0))
+          } else {
+            previousDuesPending += Math.max(0, (pd.outstandingAmount || 0) - (pd.collectedAmount || 0))
+          }
+        }
 
         return {
           id: inst.id,

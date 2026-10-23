@@ -22,8 +22,6 @@ import {
   ArrowLeft,
 } from 'lucide-react'
 
-const AUTHORIZED_DEVELOPER_EMAIL = 'prameshwar4378@gmail.com'
-
 export const LoginPage: React.FC = () => {
   const { login, sendDeveloperOtp, verifyDeveloperOtp, license } = useAuth()
   const navigate = useNavigate()
@@ -41,7 +39,7 @@ export const LoginPage: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false)
 
   // Developer OTP form state
-  const [devEmail, setDevEmail] = useState(AUTHORIZED_DEVELOPER_EMAIL)
+  const [devEmail, setDevEmail] = useState('')
   const [otpCode, setOtpCode] = useState('')
   const [otpSent, setOtpSent] = useState(false)
   const [resendCooldown, setResendCooldown] = useState(0)
@@ -91,8 +89,8 @@ export const LoginPage: React.FC = () => {
   // Handle Developer Send OTP
   const handleSendOtp = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
-    if (devEmail.trim().toLowerCase() !== AUTHORIZED_DEVELOPER_EMAIL) {
-      setErrorMsg(`Developer access is strictly restricted to ${AUTHORIZED_DEVELOPER_EMAIL} only.`)
+    if (!devEmail.trim()) {
+      setErrorMsg('Please enter your registered developer email address.')
       return
     }
 
@@ -105,7 +103,7 @@ export const LoginPage: React.FC = () => {
       if (res.success) {
         setOtpSent(true)
         setResendCooldown(45) // 45 seconds cooldown
-        setSuccessMsg(res.message || `OTP sent to ${AUTHORIZED_DEVELOPER_EMAIL}!`)
+        setSuccessMsg(res.message || 'Verification code (OTP) sent to your registered email.')
       } else {
         setErrorMsg(res.error || 'Failed to send OTP email.')
       }
@@ -308,26 +306,6 @@ export const LoginPage: React.FC = () => {
                   <KeyRound className="w-4 h-4" />
                   {isSubmitting ? 'Authenticating...' : 'Sign In as Class Owner'}
                 </Button>
-
-                {/* Quick Credentials Helper */}
-                <div className="pt-2 border-t">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setUsername('sutawane')
-                      setPassword('sutawane@123')
-                      setErrorMsg('')
-                    }}
-                    className="w-full p-2 rounded-lg border bg-muted/40 hover:bg-muted text-left transition-colors cursor-pointer"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-foreground">Auto-fill Default Owner:</span>
-                      <Badge variant="outline" className="text-[10px] py-0 text-emerald-700 bg-emerald-50 border-emerald-300">
-                        sutawane
-                      </Badge>
-                    </div>
-                  </button>
-                </div>
               </form>
             ) : (
               /* TAB 2: DEVELOPER EMAIL + OTP LOGIN */
@@ -335,10 +313,10 @@ export const LoginPage: React.FC = () => {
                 <div className="p-3 bg-blue-50/70 border border-blue-200 rounded-lg text-xs space-y-1 dark:bg-blue-950/40 dark:border-blue-900">
                   <div className="font-semibold text-blue-900 dark:text-blue-300 flex items-center gap-1.5">
                     <Mail className="w-3.5 h-3.5 text-blue-600" />
-                    <span>Authorized Developer Email Only</span>
+                    <span>Authorized Developer Authentication</span>
                   </div>
-                  <p className="text-[11px] text-blue-800 dark:text-blue-200 leading-relaxed font-mono">
-                    {AUTHORIZED_DEVELOPER_EMAIL}
+                  <p className="text-[11px] text-blue-800 dark:text-blue-200 leading-relaxed">
+                    Enter your registered developer email address to receive a secure 2-Factor OTP verification code.
                   </p>
                 </div>
 
@@ -355,18 +333,20 @@ export const LoginPage: React.FC = () => {
                           type="email"
                           value={devEmail}
                           onChange={(e) => setDevEmail(e.target.value)}
+                          placeholder="Enter registered developer email"
                           className="pl-9 text-xs h-9 font-mono"
+                          autoFocus
                           required
                         />
                       </div>
                       <p className="text-[10px] text-muted-foreground">
-                        * Software strictly accepts only <span className="font-mono font-semibold">{AUTHORIZED_DEVELOPER_EMAIL}</span>.
+                        * A 6-digit verification code will be dispatched to your registered email.
                       </p>
                     </div>
 
                     <Button
                       type="submit"
-                      disabled={isSubmitting || devEmail.trim().toLowerCase() !== AUTHORIZED_DEVELOPER_EMAIL}
+                      disabled={isSubmitting || !devEmail.trim()}
                       className="w-full h-9 text-xs font-bold gap-2 shadow-sm bg-blue-600 hover:bg-blue-700 text-white"
                     >
                       <Send className="w-4 h-4" />
@@ -406,7 +386,7 @@ export const LoginPage: React.FC = () => {
                         required
                       />
                       <p className="text-[10px] text-muted-foreground text-center">
-                        Code sent to {AUTHORIZED_DEVELOPER_EMAIL} (valid for 10 minutes)
+                        Code sent to your registered developer email (valid for 10 minutes)
                       </p>
                     </div>
 
