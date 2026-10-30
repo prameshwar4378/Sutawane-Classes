@@ -119,7 +119,7 @@ export const Header: React.FC = () => {
         <button
           type="button"
           onClick={toggleSidebar}
-          className="p-1.5 -ml-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors flex-shrink-0 focus:outline-none"
+          className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-input/60 bg-muted/30 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors shadow-2xs cursor-pointer flex-shrink-0"
           title={isSidebarCollapsed ? 'Expand navigation menu (Ctrl+B)' : 'Collapse navigation menu (Ctrl+B)'}
           aria-label="Toggle navigation menu"
         >
@@ -134,7 +134,7 @@ export const Header: React.FC = () => {
       {/* Global Quick Search with Autocomplete */}
       <div ref={searchContainerRef} className="hidden md:flex items-center flex-1 max-w-sm relative">
         <div className="relative w-full">
-          <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-muted-foreground pointer-events-none" />
+          <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
           <Input
             type="text"
             value={searchQuery}
@@ -150,7 +150,7 @@ export const Header: React.FC = () => {
                 ? 'Quick search all branches...'
                 : `Quick search ${currentBranch?.name || 'branch'}...`
             }
-            className="pl-8 pr-7 h-8 text-xs bg-muted/40 focus:bg-background border-muted rounded-lg w-full"
+            className="pl-9 pr-7 h-9 text-xs bg-muted/40 focus:bg-background border-input rounded-lg w-full shadow-2xs"
           />
           {searchQuery && (
             <button
@@ -243,15 +243,15 @@ export const Header: React.FC = () => {
         )}
       </div>
 
-      <div className="flex items-center gap-3 flex-shrink-0">
+      <div className="flex items-center gap-2 sm:gap-2.5 lg:gap-3 flex-shrink-0">
         {/* Branch Selector */}
-        <div className="flex items-center gap-2 bg-muted/60 px-3 py-1.5 rounded-lg border text-sm">
-          <Building2 className="w-4 h-4 text-primary" />
-          <span className="text-xs font-medium text-muted-foreground hidden lg:inline">Branch:</span>
+        <div className="h-9 flex items-center gap-1.5 sm:gap-2 bg-muted/40 hover:bg-muted/60 px-2.5 sm:px-3 rounded-lg border border-input text-xs max-w-[210px] xl:max-w-[260px] min-w-0 transition-colors shadow-2xs">
+          <Building2 className="w-4 h-4 text-primary flex-shrink-0" />
+          <span className="text-xs font-medium text-muted-foreground hidden lg:inline flex-shrink-0">Branch:</span>
           <select
             value={selectedBranchId}
             onChange={(e) => requestBranchChange(e.target.value)}
-            className="bg-transparent font-medium text-sm focus:outline-none cursor-pointer pr-1"
+            className="h-full bg-transparent font-medium text-xs focus:outline-none cursor-pointer truncate py-0 leading-none pr-1 border-0"
           >
             <option value="ALL">All Branches (Consolidated)</option>
             {branches
@@ -265,13 +265,13 @@ export const Header: React.FC = () => {
         </div>
 
         {/* Academic Session Selector */}
-        <div className="flex items-center gap-2 bg-muted/60 px-3 py-1.5 rounded-lg border text-sm">
-          <Calendar className="w-4 h-4 text-emerald-600" />
-          <span className="text-xs font-medium text-muted-foreground hidden lg:inline">Session:</span>
+        <div className="h-9 flex items-center gap-1.5 sm:gap-2 bg-muted/40 hover:bg-muted/60 px-2.5 sm:px-3 rounded-lg border border-input text-xs max-w-[200px] xl:max-w-[250px] min-w-0 transition-colors shadow-2xs">
+          <Calendar className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+          <span className="text-xs font-medium text-muted-foreground hidden lg:inline flex-shrink-0">Session:</span>
           <select
             value={selectedSessionId || ''}
             onChange={(e) => requestSessionChange(e.target.value)}
-            className="bg-transparent font-medium text-sm focus:outline-none cursor-pointer pr-1"
+            className="h-full bg-transparent font-medium text-xs focus:outline-none cursor-pointer truncate py-0 leading-none pr-1 border-0"
           >
             <option value="ALL">All Academic Sessions (Consolidated)</option>
             {sessions
@@ -290,30 +290,30 @@ export const Header: React.FC = () => {
           onClick={handleRefresh}
           disabled={isRefreshing}
           title="Refresh software data (Ctrl+Click to reload window)"
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border bg-muted/60 hover:bg-muted text-xs font-semibold text-foreground transition-all cursor-pointer shadow-2xs hover:border-primary/50 focus:outline-none"
+          className="h-9 inline-flex items-center gap-1.5 px-3 rounded-lg border border-input bg-muted/40 hover:bg-muted text-xs font-semibold text-foreground transition-all cursor-pointer shadow-2xs hover:border-primary/50 focus:outline-none flex-shrink-0"
           aria-label="Refresh application data"
         >
-          <RotateCw className={`w-3.5 h-3.5 text-primary ${isRefreshing ? 'animate-spin' : ''}`} />
+          <RotateCw className={`w-3.5 h-3.5 text-primary flex-shrink-0 ${isRefreshing ? 'animate-spin' : ''}`} />
           <span className="hidden sm:inline">Refresh</span>
         </button>
 
         {/* Live Online Status: Green Blinking & Pulse Animation Beacon */}
-        <div className="flex items-center pl-1" title="System Online (Local Persistent SQLite Active)">
+        <div className="flex items-center flex-shrink-0" title="System Online (Local Persistent SQLite Active)">
           {isSuccess && health?.status === 'healthy' ? (
-            <div className="flex items-center gap-1.5 py-1 px-2 rounded-full hover:bg-muted/50 transition-colors cursor-default">
-              <span className="relative flex h-2.5 w-2.5">
+            <div className="h-9 inline-flex items-center gap-1.5 px-2.5 rounded-lg border border-emerald-500/20 bg-emerald-500/5 text-xs font-semibold text-emerald-600 cursor-default shadow-2xs">
+              <span className="relative flex h-2.5 w-2.5 flex-shrink-0">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
               </span>
               <span className="text-xs font-semibold text-emerald-600 hidden sm:inline">Online</span>
             </div>
           ) : isError ? (
-            <div className="flex items-center gap-1.5 py-1 px-2 rounded-full hover:bg-muted/50 cursor-default" title="System Offline">
-              <span className="h-2.5 w-2.5 rounded-full bg-rose-500 animate-pulse"></span>
+            <div className="h-9 inline-flex items-center gap-1.5 px-2.5 rounded-lg border border-rose-500/20 bg-rose-500/5 text-xs font-semibold text-rose-600 cursor-default shadow-2xs" title="System Offline">
+              <span className="h-2.5 w-2.5 rounded-full bg-rose-500 animate-pulse flex-shrink-0"></span>
               <span className="text-xs font-semibold text-rose-600 hidden sm:inline">Offline</span>
             </div>
           ) : (
-            <div className="flex items-center gap-1.5 py-1 px-2" title="Connecting...">
+            <div className="h-9 inline-flex items-center gap-1.5 px-2.5 rounded-lg border border-input bg-muted/40" title="Connecting...">
               <span className="h-3 w-3 rounded-full border-2 border-primary border-t-transparent animate-spin"></span>
             </div>
           )}
@@ -321,15 +321,15 @@ export const Header: React.FC = () => {
 
         {/* User Role & Logout */}
         {user && (
-          <div className="flex items-center gap-2 pl-2 border-l">
+          <div className="h-9 flex items-center gap-1.5 sm:gap-2 pl-1.5 sm:pl-2 border-l flex-shrink-0">
             {isDeveloper ? (
-              <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs py-1 px-2.5 gap-1 hidden sm:flex">
-                <ShieldAlert className="w-3.5 h-3.5 text-blue-600" />
+              <Badge variant="outline" className="h-9 bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-900/50 border border-blue-200 text-xs px-2.5 rounded-lg font-semibold gap-1.5 hidden sm:inline-flex items-center shadow-2xs">
+                <ShieldAlert className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
                 <span>Developer</span>
               </Badge>
             ) : (
-              <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs py-1 px-2.5 gap-1 hidden sm:flex">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+              <Badge variant="outline" className="h-9 bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900/50 border border-emerald-200 text-xs px-2.5 rounded-lg font-semibold gap-1.5 hidden sm:inline-flex items-center shadow-2xs">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
                 <span>Class Owner</span>
               </Badge>
             )}
@@ -338,7 +338,7 @@ export const Header: React.FC = () => {
               type="button"
               onClick={() => logout()}
               title={`Sign Out (@${user.username})`}
-              className="p-1.5 rounded-lg text-muted-foreground hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
+              className="h-9 w-9 inline-flex items-center justify-center rounded-lg border border-input/60 bg-muted/40 hover:bg-red-50 hover:border-red-300 dark:hover:bg-red-950/40 text-muted-foreground hover:text-red-600 transition-colors flex-shrink-0 shadow-2xs cursor-pointer"
             >
               <LogOut className="w-4 h-4" />
             </button>
